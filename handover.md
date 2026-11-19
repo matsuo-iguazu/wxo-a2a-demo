@@ -129,9 +129,28 @@ PREFERRED_MODELS = [
 
 ### 参考
 - Render URL：https://wxo-a2a-demo.onrender.com
+- Render ダッシュボード：https://dashboard.render.com（→ 下記アクセス手順参照）
 - GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
 - クォータ確認：https://ai.dev/rate-limit
 - Google AI Studio レート制限ドキュメント：https://aistudio.google.com/docs/rate-limits
+
+---
+
+## 7. Render ダッシュボードへのアクセス手順
+
+1. https://dashboard.render.com を開く
+2. **「GitHub でログイン」** を選択（GitHub アカウントで認証）
+3. 左メニューまたはトップページのサービス一覧から **`wxo-a2a-demo`** を選択
+4. 主要タブの使い方：
+
+| タブ | 用途 |
+|---|---|
+| **Logs** | リアルタイムログ確認（モデルの成功/失敗、エラー内容） |
+| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `SYSTEM_INSTRUCTION` など） |
+| **Events** | デプロイ履歴の確認 |
+| **Settings** | サービス設定（GitHub リポジトリ連携、自動デプロイ設定など） |
+
+> **Tips**：GitHub に push すると自動デプロイが走る。Logs タブで `==> Your service is live 🎉` が出ればデプロイ完了。
 
 ---
 

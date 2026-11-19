@@ -63,7 +63,7 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 | Server URL | `https://wxo-a2a-demo.onrender.com` |
 | 認証 | 基本認証（Basic Auth）/ ユーザー名: `dummy` / パスワード: `dummy` |
 
-> **注意**：Basic Auth の `dummy/dummy` は Render 側では実際には検証していない（agent_server.py に認証ロジックなし）。wxO 側の接続定義上の形式的な設定。
+> **注意**：Basic Auth の `dummy/dummy` は、wxO UI 上で外部エージェント接続を定義する際に認証情報の入力が必須だったため便宜上設定した仮の値。Render 側（`agent_server.py`）では認証検証を行っていないため実質素通り。
 
 **エンドポイント一覧**：
 

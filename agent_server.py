@@ -23,14 +23,18 @@ PREFERRED_MODELS = [
     "gemma-4-26b-a4b-it",
 ]
 
-SYSTEM_INSTRUCTION = """
+# 環境変数 SYSTEM_INSTRUCTION が未設定のときに使われるシンプルなデフォルト指示
+DEFAULT_SYSTEM_INSTRUCTION = """
 あなたは企業の海外出張リスク分析の専門アドバイザーです。
 ユーザーから渡航先・期間・目的などの情報が入力されたら、以下の4項目を簡潔かつ実務的に分析して回答してください。
 1. 治安・安全リスク（渡航先の現在の一般的な注意点）
 2. 健康・医療・感染症対策（必要な予防接種や衛生面の注意）
-3. 入国・ビザ・現地法規の注意点
+3. 入国・ビザ・現地法規・ビジネス文化の注意点
 4. 出張者への推奨アクション（事前準備リスト）
 """
+
+# Render の Environment Variables に SYSTEM_INSTRUCTION を設定すればそちらが優先される
+SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT_SYSTEM_INSTRUCTION
 
 
 def get_model_candidates() -> List[str]:
@@ -108,7 +112,11 @@ def build_agent_card(base_url: str) -> Dict[str, Any]:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "api_key_configured": bool(GEMINI_API_KEY)}
+    return {
+        "status": "ok",
+        "api_key_configured": bool(GEMINI_API_KEY),
+        "custom_system_instruction": bool(os.environ.get("SYSTEM_INSTRUCTION", "").strip()),
+    }
 
 
 @app.get("/models")

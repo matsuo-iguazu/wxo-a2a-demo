@@ -55,19 +55,22 @@ def call_gemini_sync(prompt: str) -> str:
 
     errors: List[str] = []
     for model_name in get_model_candidates():
+        use_search = model_name.startswith("gemini-")
         try:
-            logger.info(f"Calling Gemini model: {model_name}")
+            logger.info(f"Calling Gemini model: {model_name} (search={use_search})")
+            config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.3,
+                tools=[{"google_search": {}}] if use_search else None,
+            )
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.3,
-                ),
+                config=config,
             )
             text = getattr(response, "text", None)
             if text:
-                logger.info(f"Success with model: {model_name}")
+                logger.info(f"Success with model: {model_name} (search={use_search})")
                 return text
             logger.warning(f"Model {model_name} returned empty text")
             errors.append(f"{model_name}: empty response")
@@ -116,6 +119,7 @@ async def health():
         "status": "ok",
         "api_key_configured": bool(GEMINI_API_KEY),
         "custom_system_instruction": bool(os.environ.get("SYSTEM_INSTRUCTION", "").strip()),
+        "search_enabled_for_gemini": True,
     }
 
 

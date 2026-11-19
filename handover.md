@@ -132,3 +132,17 @@ PREFERRED_MODELS = [
 - GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
 - クォータ確認：https://ai.dev/rate-limit
 - Google AI Studio レート制限ドキュメント：https://aistudio.google.com/docs/rate-limits
+
+---
+
+## 6. クォータリセットポリシー（Google AI Studio 無料枠）
+
+| 種別 | リセット間隔 | 詳細 |
+|---|---|---|
+| **RPM**（1分あたり） | **1分ごと**（ローリングウィンドウ） | 1分待てば即回復 |
+| **RPD**（1日あたり） | **太平洋時間（PT）深夜0時** | 日本時間 午後4時（PDT/夏時間）または午後5時（PST/冬時間） |
+
+- 11月は PST（冬時間）のため、**日本時間 午後5時頃**に RPD がリセットされる。
+- `429 RESOURCE_EXHAUSTED` が出ても、RPM 超過であれば**1〜2分待つだけで回復**する。
+- RPD 上限に達した場合のみ、当日の午後5時まで待つ必要がある。
+- `gemini-3.1-flash-lite` は RPD=500 と余裕があるため、RPD 上限に達しにくい。

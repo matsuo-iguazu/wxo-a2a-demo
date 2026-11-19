@@ -1,7 +1,7 @@
 import os
 import uuid
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from google import genai
@@ -12,15 +12,12 @@ logger = logging.getLogger("a2a-travel-agent")
 
 app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 
-# 環境変数からAPIキーを取得
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# 現在有効なGeminiモデル候補（上から順に試行）
-MODEL_CANDIDATES = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
+BASE_MODEL_CANDIDATES = [
+    "gemini-3.8-flash",
+    "models/gemini-3.8-flash",
 ]
 
 SYSTEM_INSTRUCTION = """
@@ -33,12 +30,36 @@ SYSTEM_INSTRUCTION = """
 """
 
 
+def list_available_models() -> List[str]:
+    if not client:
+        return []
+    names: List[str] = []
+    try:
+        for m in client.models.list():
+            name = getattr(m, "name", "")
+            if name:
+                names.append(name)
+    except Exception as e:
+        logger.warning(f"Failed to list models: {e}")
+    return names
+
+
+def get_model_candidates() -> List[str]:
+    candidates: List[str] = list(BASE_MODEL_CANDIDATES)
+    for available in list_available_models():
+        short = available.replace("models/", "")
+        for item in (short, available):
+            if item not in candidates:
+                candidates.append(item)
+    return candidates
+
+
 def call_gemini(prompt: str) -> str:
     if not client:
         raise RuntimeError("GEMINI_API_KEY が設定されていません。")
 
-    last_error = None
-    for model_name in MODEL_CANDIDATES:
+    errors: List[str] = []
+    for model_name in get_model_candidates():
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -53,10 +74,10 @@ def call_gemini(prompt: str) -> str:
                 return response.text
         except Exception as e:
             logger.warning(f"Model {model_name} failed: {e}")
-            last_error = e
+            errors.append(f"{model_name}: {e}")
             continue
 
-    raise RuntimeError(f"すべての候補モデルで呼び出しに失敗しました: {last_error}")
+    raise RuntimeError("すべての候補モデルで呼び出しに失敗しました: " + " | ".join(errors))
 
 
 def build_agent_card(base_url: str) -> Dict[str, Any]:
@@ -91,11 +112,14 @@ async def health():
     return {"status": "ok", "api_key_configured": bool(GEMINI_API_KEY)}
 
 
-# A2A公式のAgent Cardエンドポイント（新旧両方のパスに対応）
+@app.get("/models")
+async def models_endpoint():
+    return {"available_models": list_available_models()}
+
+
 @app.get("/.well-known/agent-card.json")
 @app.get("/.well-known/agent.json")
 async def get_agent_card(request: Request):
-    # リバースプロキシ（Render等）配下でも正しいhttps URLを生成
     forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", request.url.netloc)
     base_url = f"{forwarded_proto}://{host}"
@@ -103,7 +127,6 @@ async def get_agent_card(request: Request):
 
 
 def extract_user_text(params: Dict[str, Any]) -> str:
-    """A2Aの message/send または tasks/send パラメータからテキストを抽出"""
     message = params.get("message", {})
     parts = message.get("parts", [])
     texts = []
@@ -115,11 +138,9 @@ def extract_user_text(params: Dict[str, Any]) -> str:
                 texts.append(part["text"])
     if texts:
         return "\n".join(texts)
-    # フォールバック（直接テキストが渡された場合）
     return str(params.get("input", "海外出張のリスクを教えてください。"))
 
 
-# A2A JSON-RPC 2.0 メインエンドポイント
 @app.post("/")
 async def a2a_rpc_endpoint(request: Request):
     try:
@@ -152,7 +173,6 @@ async def a2a_rpc_endpoint(request: Request):
         context_id = params.get("contextId") or str(uuid.uuid4())
         msg_id = str(uuid.uuid4())
 
-        # A2A標準のTask完了レスポンス形式
         result = {
             "id": task_id,
             "contextId": context_id,

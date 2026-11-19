@@ -22,9 +22,12 @@ PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "g
 
 # タイムアウトや遅延を防ぐため、本命＋次点＋実績のある保険の最小構成に絞る
 PREFERRED_MODELS = [
-    PRIMARY_MODEL,
+    PRIMARY_MODEL,       # gemini-3.8-flash
     "gemini-3.7-flash",
-    "gemini-2.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
 ]
 

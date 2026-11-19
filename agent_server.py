@@ -24,6 +24,7 @@ PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "g
 PREFERRED_MODELS = [
     PRIMARY_MODEL,
     "gemini-3.7-flash",
+    "gemini-2.5-flash",
     "gemma-4-26b-a4b-it",
 ]
 

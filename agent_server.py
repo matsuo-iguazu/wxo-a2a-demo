@@ -18,16 +18,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # 環境変数 GEMINI_MODEL があれば最優先、なければ gemini-3.8-flash を使用
-PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip() or "gemini-3.1-flash-lite"
 
-# タイムアウトや遅延を防ぐため、本命＋次点＋実績のある保険の最小構成に絞る
+# クォータ状況（無料枠）に基づく優先順位:
+#   gemini-3.1-flash-lite: RPM=15, RPD=500 ← 余裕大
+#   gemini-3.8-flash:      RPM=5,  RPD=20  ← 次点
+#   gemini-3.6-flash:      RPM=5,  RPD=20  ← 次々点
+#   gemma-4-26b-a4b-it:    RPM=30, RPD=14.4K ← 最終保険（search=False）
 PREFERRED_MODELS = [
-    PRIMARY_MODEL,       # gemini-3.8-flash
-    "gemini-3.7-flash",
+    PRIMARY_MODEL,       # gemini-3.1-flash-lite
+    "gemini-3.8-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
 ]
 

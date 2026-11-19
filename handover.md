@@ -5,6 +5,32 @@
 
 ---
 
+## 0. システムトポロジー
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant wxO as watsonx Orchestrate
+    participant Render as Render<br/>(agent_server.py)
+    participant GeminiAPI as Gemini API<br/>(Google AI Studio)
+    participant Search as Google Search<br/>(Grounding)
+
+    User->>wxO: 質問入力（例：バンコク出張のリスクは？）
+    wxO->>Render: A2A RPC POST /<br/>method: message/send / JSON-RPC 2.0
+    Note over Render: extract_user_text() でテキスト抽出
+    Render->>GeminiAPI: generateContent<br/>model: gemini-3.1-flash-lite + GoogleSearch Tool
+    GeminiAPI->>Search: Web検索クエリ発行（天気・ニュース・イベント等）
+    Search-->>GeminiAPI: 検索結果
+    GeminiAPI-->>Render: 200 OK（検索結果を含む生成テキスト）
+    Note over Render: _extract_response_text() でテキスト抽出
+    Render-->>wxO: JSON-RPC response<br/>status.state: "completed" / artifacts: [Travel Risk Report]
+    wxO-->>User: エージェント応答表示
+```
+
+> **補足**：`search=False`（Gemma系フォールバック時）は Google Search が呼ばれず1直線になる。
+
+---
+
 ## 1. プロジェクトの目的（要約）
 
 watsonx Orchestrate（wxO）から外部 A2A エージェントを接続するデモを構築する。  
@@ -26,6 +52,18 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 | ソース管理 | GitHub `matsuo-iguazu/wxo-a2a-demo` |
 | LLM | Gemini API（Google AI Studio、プロジェクト `wxo-a2a`） |
 | デプロイ | GitHub push → Render 自動デプロイ |
+
+### watsonx Orchestrate 側の設定
+
+| 項目 | 値 |
+|---|---|
+| エージェント名 | `M_test_A2A_gemini` |
+| エージェント内定義（外部エージェント） | `海外出張リスク分析（Gemini）` |
+| 外部エージェント接続名 | `M_test_A2A_gemini`（仮定義） |
+| Server URL | `https://wxo-a2a-demo.onrender.com` |
+| 認証 | 基本認証（Basic Auth）/ ユーザー名: `dummy` / パスワード: `dummy` |
+
+> **注意**：Basic Auth の `dummy/dummy` は Render 側では実際には検証していない（agent_server.py に認証ロジックなし）。wxO 側の接続定義上の形式的な設定。
 
 **エンドポイント一覧**：
 

@@ -102,6 +102,8 @@ def _invoke_model(model_name: str, prompt: str, use_search: bool) -> str:
 
 
 def call_gemini_sync(prompt: str) -> str:
+    import time
+
     if not client:
         raise RuntimeError("GEMINI_API_KEY が設定されていません。")
 
@@ -121,6 +123,19 @@ def call_gemini_sync(prompt: str) -> str:
                 # クォータ上限（429）の場合は同じモデルでの再試行をスキップして次へ進む
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     break
+
+                # 一時的な高負荷（503）の場合は3秒待ってから同一構成で1回だけリトライ
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    logger.info(f"Model {model_name} returned 503, retrying once after 3s...")
+                    time.sleep(3)
+                    try:
+                        return _invoke_model(model_name, prompt, use_search=use_search)
+                    except Exception as e2:
+                        err_str2 = str(e2)
+                        logger.warning(f"Model {model_name} (search={use_search}) retry also failed: {err_str2}")
+                        errors[-1] += f" [retry: {err_str2}]"
+                    break
+
                 continue
 
     raise RuntimeError("すべての候補モデルで呼び出しに失敗しました: " + " | ".join(errors))

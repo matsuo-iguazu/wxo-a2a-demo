@@ -17,15 +17,13 @@ app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# テキスト生成に適したモデルを優先順に固定（総当たりによるタイムアウトを防止）
+# 環境変数 GEMINI_MODEL があれば最優先、なければ gemini-3.8-flash を使用
 PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+
+# タイムアウトや遅延を防ぐため、本命＋次点＋実績のある保険の最小構成に絞る
 PREFERRED_MODELS = [
     PRIMARY_MODEL,
-    "gemini-3.8-flash",
     "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
 ]
 
@@ -55,6 +53,26 @@ def get_model_candidates() -> List[str]:
     return candidates
 
 
+def _extract_response_text(response: Any) -> str:
+    direct_text = getattr(response, "text", None)
+    if isinstance(direct_text, str) and direct_text.strip():
+        return direct_text.strip()
+
+    parts_text: List[str] = []
+    candidates = getattr(response, "candidates", None) or []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            if getattr(part, "thought", False):
+                continue
+            p_text = getattr(part, "text", None)
+            if isinstance(p_text, str) and p_text.strip():
+                parts_text.append(p_text.strip())
+
+    return "\n".join(parts_text).strip()
+
+
 def _invoke_model(model_name: str, prompt: str, use_search: bool) -> str:
     logger.info(f"Calling Gemini model: {model_name} (search={use_search})")
     tools = [types.Tool(google_search=types.GoogleSearch())] if use_search else None
@@ -68,9 +86,12 @@ def _invoke_model(model_name: str, prompt: str, use_search: bool) -> str:
         contents=prompt,
         config=config,
     )
-    text = getattr(response, "text", None)
-    if not text or not text.strip():
-        raise RuntimeError("empty response")
+    text = _extract_response_text(response)
+    if not text:
+        finish_reasons = [
+            getattr(c, "finish_reason", None) for c in (getattr(response, "candidates", None) or [])
+        ]
+        raise RuntimeError(f"empty response (finish_reasons={finish_reasons})")
     logger.info(f"Success with model: {model_name} (search={use_search})")
     return text
 
@@ -88,8 +109,13 @@ def call_gemini_sync(prompt: str) -> str:
             try:
                 return _invoke_model(model_name, prompt, use_search=use_search)
             except Exception as e:
-                logger.warning(f"Model {model_name} (search={use_search}) failed: {e}")
-                errors.append(f"{model_name}[search={use_search}]: {e}")
+                err_str = str(e)
+                logger.warning(f"Model {model_name} (search={use_search}) failed: {err_str}")
+                errors.append(f"{model_name}[search={use_search}]: {err_str}")
+
+                # クォータ上限（429）の場合は同じモデルでの再試行をスキップして次へ進む
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    break
                 continue
 
     raise RuntimeError("すべての候補モデルで呼び出しに失敗しました: " + " | ".join(errors))

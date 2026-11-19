@@ -18,8 +18,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # テキスト生成に適したモデルを優先順に固定（総当たりによるタイムアウトを防止）
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
 PREFERRED_MODELS = [
-    os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+    PRIMARY_MODEL,
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-flash-latest",
+    "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
 ]
 

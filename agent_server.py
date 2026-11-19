@@ -1,7 +1,9 @@
+import asyncio
+import logging
 import os
 import uuid
-import logging
 from typing import Any, Dict, List
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from google import genai
@@ -15,9 +17,10 @@ app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-BASE_MODEL_CANDIDATES = [
-    "gemini-3.8-flash",
-    "models/gemini-3.8-flash",
+# テキスト生成に適したモデルを優先順に固定（総当たりによるタイムアウトを防止）
+PREFERRED_MODELS = [
+    os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+    "gemma-4-26b-a4b-it",
 ]
 
 SYSTEM_INSTRUCTION = """
@@ -30,37 +33,26 @@ SYSTEM_INSTRUCTION = """
 """
 
 
-def list_available_models() -> List[str]:
-    if not client:
-        return []
-    names: List[str] = []
-    try:
-        for m in client.models.list():
-            name = getattr(m, "name", "")
-            if name:
-                names.append(name)
-    except Exception as e:
-        logger.warning(f"Failed to list models: {e}")
-    return names
-
-
 def get_model_candidates() -> List[str]:
-    candidates: List[str] = list(BASE_MODEL_CANDIDATES)
-    for available in list_available_models():
-        short = available.replace("models/", "")
-        for item in (short, available):
-            if item not in candidates:
-                candidates.append(item)
+    candidates: List[str] = []
+    for m in PREFERRED_MODELS:
+        cleaned = (m or "").strip()
+        if not cleaned:
+            continue
+        short = cleaned.replace("models/", "")
+        if short not in candidates:
+            candidates.append(short)
     return candidates
 
 
-def call_gemini(prompt: str) -> str:
+def call_gemini_sync(prompt: str) -> str:
     if not client:
         raise RuntimeError("GEMINI_API_KEY が設定されていません。")
 
     errors: List[str] = []
     for model_name in get_model_candidates():
         try:
+            logger.info(f"Calling Gemini model: {model_name}")
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -69,15 +61,22 @@ def call_gemini(prompt: str) -> str:
                     temperature=0.3,
                 ),
             )
-            if response.text:
+            text = getattr(response, "text", None)
+            if text:
                 logger.info(f"Success with model: {model_name}")
-                return response.text
+                return text
+            logger.warning(f"Model {model_name} returned empty text")
+            errors.append(f"{model_name}: empty response")
         except Exception as e:
             logger.warning(f"Model {model_name} failed: {e}")
             errors.append(f"{model_name}: {e}")
             continue
 
     raise RuntimeError("すべての候補モデルで呼び出しに失敗しました: " + " | ".join(errors))
+
+
+async def call_gemini(prompt: str) -> str:
+    return await asyncio.to_thread(call_gemini_sync, prompt)
 
 
 def build_agent_card(base_url: str) -> Dict[str, Any]:
@@ -114,7 +113,17 @@ async def health():
 
 @app.get("/models")
 async def models_endpoint():
-    return {"available_models": list_available_models()}
+    if not client:
+        return {"available_models": []}
+    names: List[str] = []
+    try:
+        for m in client.models.list():
+            name = getattr(m, "name", "")
+            if name:
+                names.append(name)
+    except Exception as e:
+        logger.warning(f"Failed to list models: {e}")
+    return {"available_models": names}
 
 
 @app.get("/.well-known/agent-card.json")
@@ -129,13 +138,13 @@ async def get_agent_card(request: Request):
 def extract_user_text(params: Dict[str, Any]) -> str:
     message = params.get("message", {})
     parts = message.get("parts", [])
-    texts = []
+    texts: List[str] = []
     for part in parts:
         if isinstance(part, dict):
-            if "text" in part:
-                texts.append(part["text"])
-            elif part.get("kind") == "text" and "text" in part:
-                texts.append(part["text"])
+            if "text" in part and part["text"] is not None:
+                texts.append(str(part["text"]))
+            elif part.get("kind") == "text" and "text" in part and part["text"] is not None:
+                texts.append(str(part["text"]))
     if texts:
         return "\n".join(texts)
     return str(params.get("input", "海外出張のリスクを教えてください。"))
@@ -154,12 +163,14 @@ async def a2a_rpc_endpoint(request: Request):
     rpc_id = body.get("id")
     method = body.get("method", "")
     params = body.get("params", {})
+    logger.info(f"Received A2A RPC method={method} id={rpc_id}")
 
     if method in ("message/send", "tasks/send"):
         user_text = extract_user_text(params)
         try:
-            reply_text = call_gemini(user_text)
+            reply_text = await call_gemini(user_text)
         except Exception as e:
+            logger.error(f"A2A call_gemini failed: {e}")
             return JSONResponse(
                 status_code=500,
                 content={

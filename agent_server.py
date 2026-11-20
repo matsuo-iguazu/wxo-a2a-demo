@@ -49,12 +49,37 @@ DEFAULT_SYSTEM_INSTRUCTION = """
 SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT_SYSTEM_INSTRUCTION
 
 
-def search_travel_context(destination: str) -> Optional[str]:
-    """Tavily で渡航先の最新情報を複数クエリで検索して返す。APIキー未設定または失敗時は None を返す。"""
+def extract_destination(user_text: str) -> str:
+    """Gemini を使ってユーザー入力から渡航先の地名を抽出する。失敗時は user_text をそのまま返す。"""
+    if not client:
+        return user_text
+    try:
+        config = types.GenerateContentConfig(temperature=0.0)
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=(
+                "次の文章から渡航先の都市名または国名だけを抽出して返してください。"
+                "地名以外は一切出力しないでください。複数ある場合はカンマ区切りで。\n\n"
+                f"{user_text}"
+            ),
+            config=config,
+        )
+        destination = _extract_response_text(response).strip()
+        if destination:
+            logger.info(f"Extracted destination: {destination}")
+            return destination
+    except Exception as e:
+        logger.warning(f"Destination extraction failed: {e}")
+    return user_text
+
+
+def search_travel_context(user_text: str) -> Optional[str]:
+    """渡航先を抽出し、Tavily で最新情報を複数クエリで検索して返す。APIキー未設定または失敗時は None を返す。"""
     if not TAVILY_API_KEY:
         logger.info("TAVILY_API_KEY not set, skipping web search")
         return None
     import datetime
+    destination = extract_destination(user_text)
     now = datetime.datetime.now()
     year, month = now.year, now.month
     queries = [

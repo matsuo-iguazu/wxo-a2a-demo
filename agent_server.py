@@ -17,19 +17,20 @@ app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# 環境変数 GEMINI_MODEL があれば最優先、なければ gemini-3.8-flash を使用
-PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip() or "gemini-3.1-flash-lite"
+# 環境変数 GEMINI_MODEL があれば最優先、なければ gemini-2.0-flash を使用
+PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
 
-# クォータ状況（無料枠）に基づく優先順位:
-#   gemini-3.1-flash-lite: RPM=15, RPD=500 ← 余裕大
-#   gemini-3.8-flash:      RPM=5,  RPD=20  ← 次点
-#   gemini-3.6-flash:      RPM=5,  RPD=20  ← 次々点
-#   gemma-4-26b-a4b-it:    RPM=30, RPD=14.4K ← 最終保険（search=False）
+# モデル選定方針:
+#   Search Grounding が使えるのは Gemini 2 / 2.5 系のみ（Gemini 3 以降は RPD=0/0 で利用不可）
+#   gemini-2.0-flash:      search=True 対応、RPD=1,500 ← 本命（軽量・高速）
+#   gemini-2.5-flash-lite: search=True 対応、RPD=1,500 ← 次点（404の場合はスキップ）
+#   gemini-3.1-flash-lite: search=False のみ有効、RPD=500 ← Grounding なしフォールバック
+#   gemma-4-26b-a4b-it:    search=False、RPD=14.4K ← 最終保険
 PREFERRED_MODELS = [
-    PRIMARY_MODEL,       # gemini-3.1-flash-lite
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemma-4-26b-a4b-it",
+    PRIMARY_MODEL,           # gemini-2.0-flash (search=True 有効)
+    "gemini-2.5-flash-lite", # search=True 有効（404なら自動スキップ）
+    "gemini-3.1-flash-lite", # search=False のみ（Grounding なし）
+    "gemma-4-26b-a4b-it",    # 最終保険（search=False）
 ]
 
 # 環境変数 SYSTEM_INSTRUCTION が未設定のときに使われるシンプルなデフォルト指示

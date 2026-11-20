@@ -15,27 +15,28 @@ sequenceDiagram
     participant Tavily as Tavily Search API
     participant GeminiAPI as Gemini API<br/>(Google AI Studio)
 
-    User->>wxO: 質問入力（例：バンコク出張のリスクは？）
+    User->>wxO: 質問入力（例：明日からバンコクに3か月出張します）
     wxO->>Render: A2A RPC POST /<br/>method: message/send / JSON-RPC 2.0
     Note over Render: extract_user_text() でテキスト抽出
-    Render->>Tavily: 渡航先の最新情報を検索<br/>（治安・ニュース・最新情勢）
-    Tavily-->>Render: 検索結果（最大3件）
+    Render->>GeminiAPI: 渡航先・渡航月をJSON抽出<br/>（extract_travel_info）
+    GeminiAPI-->>Render: {"destination":"バンコク","periods":[...]}
+    Render->>Tavily: 治安・気候・イベント・天気予報を検索<br/>（近日出発時は天気予報クエリも追加）
+    Tavily-->>Render: 検索結果（最大8件）
     Note over Render: 検索結果をプロンプトに付加
-    Render->>GeminiAPI: generateContent<br/>model: gemini-3.1-flash-lite
+    Render->>GeminiAPI: generateContent（最終回答生成）
     GeminiAPI-->>Render: 200 OK（生成テキスト）
-    Note over Render: _extract_response_text() でテキスト抽出
-    Render-->>wxO: JSON-RPC response<br/>status.state: "completed" / artifacts: [Travel Risk Report]
+    Render-->>wxO: JSON-RPC response<br/>status.state: "completed"
     wxO-->>User: エージェント応答表示
 ```
 
-> **補足**：`TAVILY_API_KEY` 未設定時は Tavily 検索をスキップして直接 Gemini に渡す。
+> **補足**：`TAVILY_API_KEY` 未設定時は Tavily 検索・地名抽出をスキップして直接 Gemini に渡す。
 
 ---
 
 ## 1. プロジェクトの目的（要約）
 
 watsonx Orchestrate（wxO）から外部 A2A エージェントを接続するデモを構築する。  
-デモテーマは **海外出張リスク分析**。モデルの静的な知識だけでなく、**Tavily Web 検索**で最新情報（治安・ニュース・現地イベント等）をプロンプトに付加して Gemini に回答させる構成。
+デモテーマは **海外出張リスク分析**。Tavily Web 検索で最新情報（治安・気候・現地イベント等）をプロンプトに付加して Gemini に回答させる構成。
 
 **方針の補足（オーナーより）**：
 - クォータを消費するような高負荷な使い方は不要。デモとして動けばよい。
@@ -72,40 +73,40 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 | パス | 用途 |
 |---|---|
 | `POST /` | A2A RPC（`message/send` / `tasks/send`） |
-| `GET /health` | 稼働確認・設定確認（`tavily_configured` フィールドで Tavily の有効/無効を確認可） |
+| `GET /health` | 稼働確認（`tavily_configured` フィールドで Tavily の有効/無効を確認可） |
 | `GET /models` | 利用可能モデル一覧（Gemini API に実際に問い合わせ） |
 | `GET /.well-known/agent.json` | A2A エージェントカード |
 | `GET /.well-known/agent-card.json` | 同上（別名） |
 
 ---
 
-## 3. 調査・作業ログ（2026-11-19 〜 2026-11-20）
+## 3. 調査・作業ログ
 
 ### Google Search Grounding の制約（重要）
 
-当初 Gemini の Google Search Grounding（`search=True`）で最新情報取得を試みたが、以下の制約が判明した：
+当初 Gemini の Google Search Grounding（`search=True`）で最新情報取得を試みたが、以下の制約が判明：
 
 | 制約 | 内容 |
 |---|---|
 | Search Grounding が使えるモデル | Gemini 2 / Gemini 2.5 系のみ（無料枠 RPD=1,500） |
 | Gemini 3 以降 | Search Grounding RPD=0/0（利用不可） |
-| Gemini 2.0-flash | 廃止済み（`404 NOT_FOUND`）。`gemini-3.8-flash` を使えとメッセージあり |
-| Gemini 2.5-flash-lite | 新規ユーザー向け廃止（`404 NOT_FOUND`）。`gemini-3.5-flash-lite` を使えとメッセージあり |
+| Gemini 2.0-flash | 廃止済み（`404`）。`gemini-3.8-flash` を使えとのメッセージ |
+| Gemini 2.5-flash-lite | 新規ユーザー向け廃止（`404`）。`gemini-3.5-flash-lite` を使えとのメッセージ |
 
-→ **結論：無料枠では Search Grounding は事実上使えない。課金なしの代替手段として Tavily を採用。**
+→ **結論：無料枠では Search Grounding は事実上使えない。代替として Tavily を採用。**
 
 ### エラーパターンと対処
 
 | エラー | 原因 | 対処 |
 |---|---|---|
-| `429 RESOURCE_EXHAUSTED` (search=True) | Search Grounding 専用クォータ超過 or RPM超過 | `search=True` 失敗時に同モデルで `search=False` を試行するよう修正済み |
+| `429 RESOURCE_EXHAUSTED` (search=True) | Search Grounding 専用クォータ超過 | `search=True` 失敗時に同モデルで `search=False` を試行 |
 | `429 RESOURCE_EXHAUSTED` (search=False) | 通常呼び出しの RPM/RPD 超過 | 次のモデルへスキップ |
-| `404 NOT_FOUND` | モデル廃止 | 自動的に次候補へスキップ（エラー処理済み） |
+| `404 NOT_FOUND` | モデル廃止 | 自動的に次候補へスキップ |
 | `503 UNAVAILABLE` | Google 側一時高負荷 | 3秒待って1回リトライ後、次候補へ |
 
 ### RPD は28日間ローリングウィンドウ
 
-RPD（1日あたり上限）は「日次リセット」ではなく **過去28日間のローリングウィンドウ**で管理されている模様（Google AI Studio のレート制限ページで確認）。
+RPD は「日次リセット」ではなく **過去28日間のローリングウィンドウ**で管理されている模様。
 
 ---
 
@@ -115,22 +116,27 @@ RPD（1日あたり上限）は「日次リセット」ではなく **過去28�
 
 ```
 ユーザー入力
+  ↓ extract_travel_info()  ← Gemini で JSON 解析
+渡航先・渡航月リスト（年付き）を抽出
+  例: {"destination": "バンコク", "periods": [{"year":2026,"month":11}, ...]}
+  ↓ search_travel_context()
+Tavily で3〜4クエリ検索（最大8件）：
+  - {destination} 治安 安全情報 最新
+  - {destination} {期間} 気候 季節
+  - {destination} {期間} イベント 祝日
+  - {destination} 天気予報 今週 来週  ← 出発が今月・翌月以内の場合のみ追加
   ↓ build_prompt_with_context()
-Tavily で「{入力} 渡航 治安 最新情報 2025」を検索（最大3件）
-  ↓
-検索結果をプロンプトに付加（未設定時はスキップ）
+検索結果をプロンプトに付加
   ↓ call_gemini()
-gemini-3.1-flash-lite (search=False) で回答生成
+Gemini で最終回答を生成（search=False）
   ↓
 A2A レスポンスで返却
 ```
 
-### モデル優先順位（`agent_server.py` の `PREFERRED_MODELS`）
+### モデル優先順位（`PREFERRED_MODELS`）
 
 ```python
-PRIMARY_MODEL = "gemini-2.0-flash"  # 環境変数 GEMINI_MODEL で上書き可
-                                     # ※ 404 になるため実質 gemini-3.1-flash-lite が使われる
-
+PRIMARY_MODEL = "gemini-2.0-flash"  # 404 → 自動スキップ
 PREFERRED_MODELS = [
     "gemini-2.0-flash",      # 404（廃止） → 自動スキップ
     "gemini-2.5-flash-lite", # 404（新規ユーザー廃止） → 自動スキップ
@@ -139,15 +145,13 @@ PREFERRED_MODELS = [
 ]
 ```
 
-> **TODO**：`PRIMARY_MODEL` のデフォルトを `gemini-3.1-flash-lite` に戻すか、PREFERRED_MODELS から 404 モデルを除くとクリーンになる。現状は動作に問題ないが無駄なリクエストが発生している。
+> **TODO**：`gemini-2.0-flash` と `gemini-2.5-flash-lite`（404）を除去し、`gemini-3.1-flash-lite` をプライマリに変更するとクリーンになる。現状は動作に問題ないが無駄なリクエストが発生している。
 
 ### フォールバック戦略
 
-1. `gemini-*` → `search=True` で試行 → `429` なら `search=False` で同モデル再試行
-2. `search=False` でも `429` → 次のモデルへスキップ
-3. `404` → 次のモデルへスキップ
-4. `503` → 3秒待って1回リトライ → 失敗したら次候補へ
-5. `gemma-*` → `search=False` のみ
+1. `gemini-*` → `search=True` → `429` なら `search=False` で同モデル再試行
+2. `search=False` でも `429` or `404` → 次のモデルへ
+3. `503` → 3秒待って1回リトライ → 失敗したら次候補へ
 
 ### 環境変数（Render）
 
@@ -155,26 +159,35 @@ PREFERRED_MODELS = [
 |---|---|---|
 | `GEMINI_API_KEY` | ✅ 設定済み | Gemini API キー |
 | `TAVILY_API_KEY` | ✅ 設定済み | Tavily Search API キー |
-| `SYSTEM_INSTRUCTION` | ✅ 設定済み | カスタムシステムプロンプト（詳細な指示） |
+| `SYSTEM_INSTRUCTION` | ✅ 設定済み | カスタムシステムプロンプト（下記参照） |
 | `GEMINI_MODEL` | 未設定 | プライマリモデル名の上書き（未設定時はコードデフォルト） |
+
+### SYSTEM_INSTRUCTION（現在の設定内容）
+
+```
+あなたは企業の海外出張リスク分析の専門アドバイザーです。
+提供されたWeb検索結果を必ず活用し、一般的な傾向だけでなく「渡航期間の気候傾向」や「渡航時期の祝日・大型イベント・行事・直近ニュース」などの最新情報も踏まえて、以下の構成に従って簡潔かつ実務的に回答してください。
+
+先頭に「【（渡航先名）渡航に向けた調査】」というタイトルを1行出力すること。
+
+[サマリー表]
+| 観点 | リスクレベル（低・中・高） | 最重要ポイント（1行） |
+| 治安・安全 / 健康・医療 / 法規・入国手続き / 気候・行事・ビジネス環境 |
+
+### 1. 治安・安全リスク / 2. 健康・医療 / 3. 入国・ビザ・法規 / 4. 渡航期間の気候・行事・推奨アクション
+
+§4 の気候・行事・イベント：直近の天気予報または気候傾向と渡航期間中の祝日・イベントを引用。
+天気予報の検索結果がある場合は具体的な気温・天候を記載すること。
+
+ルール：700〜1,000文字、冗長な前置き不要、自然な日本語で。
+```
 
 ---
 
 ## 5. 残課題・次のアクション
 
-### 優先度 高
-- [ ] **wxO からのエンドツーエンド確認**：watsonx Orchestrate からの呼び出しで Tavily 検索結果を含む応答が表示されるか確認する
-
 ### 優先度 中
 - [ ] **PREFERRED_MODELS の整理**：404 になる `gemini-2.0-flash` と `gemini-2.5-flash-lite` を除去し、`gemini-3.1-flash-lite` をプライマリに戻す
-- [ ] **応答品質の確認**：Tavily の検索結果が実際に回答に反映されているか（天気・最新ニュース・現地イベント）を人間の目で確認する
-
-### 参考リンク
-- Render URL：https://wxo-a2a-demo.onrender.com
-- Render ダッシュボード：https://dashboard.render.com（GitHub でログイン → `wxo-a2a-demo` を選択）
-- GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
-- クォータ確認：https://ai.dev/rate-limit
-- Tavily：https://app.tavily.com
 
 ---
 
@@ -183,10 +196,7 @@ PREFERRED_MODELS = [
 | 種別 | リセット間隔 | 詳細 |
 |---|---|---|
 | **RPM**（1分あたり） | **1分ごと**（ローリングウィンドウ） | 1分待てば即回復 |
-| **RPD**（1日あたり） | **過去28日間ローリングウィンドウ**（日次リセットではない） | 使った分だけ28日間残る |
-
-- `429` が出ても RPM 超過であれば **1〜2分待つだけで回復** する。
-- RPD は日次リセットではないため、使い切ったら28日間待つ必要がある（ただし `gemini-3.1-flash-lite` は RPD=500 と余裕大）。
+| **RPD**（1日あたり） | **過去28日間ローリングウィンドウ** | 使った分だけ28日間残る |
 
 ---
 
@@ -194,14 +204,21 @@ PREFERRED_MODELS = [
 
 1. https://dashboard.render.com を開く
 2. **「GitHub でログイン」** を選択（GitHub アカウントで認証）
-3. 左メニューまたはトップページのサービス一覧から **`wxo-a2a-demo`** を選択
-4. 主要タブの使い方：
+3. サービス一覧から **`wxo-a2a-demo`** を選択
 
 | タブ | 用途 |
 |---|---|
-| **Logs** | リアルタイムログ確認（Tavily 検索結果件数、モデルの成功/失敗） |
-| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `TAVILY_API_KEY` など） |
-| **Events** | デプロイ履歴の確認 |
-| **Settings** | サービス設定（GitHub リポジトリ連携、自動デプロイ設定など） |
+| **Logs** | リアルタイムログ（Tavily 検索クエリ・件数・モデルの成功/失敗） |
+| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `TAVILY_API_KEY`, `SYSTEM_INSTRUCTION`） |
+| **Events** | デプロイ履歴 |
 
-> **Tips**：GitHub に push すると自動デプロイが走る。Logs タブで `==> Your service is live 🎉` が出ればデプロイ完了。
+> **Tips**：GitHub に push すると自動デプロイ。`SYSTEM_INSTRUCTION` の変更はデプロイ不要で即時反映。
+
+---
+
+## 8. 参考リンク
+
+- Render URL：https://wxo-a2a-demo.onrender.com
+- GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
+- クォータ確認：https://ai.dev/rate-limit
+- Tavily：https://app.tavily.com

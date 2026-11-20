@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>海外出張リスク分析</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      background: #f7f8fa;
+      color: #1f2328;
+      min-height: 100vh;
+    }
+    header {
+      background: #1f2328;
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { font-size: 13px; color: #adb5bd; }
+    .container { max-width: 760px; margin: 32px auto; padding: 0 16px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #1f2328; }
+    label { display: block; font-size: 13px; font-weight: 500; color: #57606a; margin-bottom: 4px; margin-top: 14px; }
+    label:first-of-type { margin-top: 0; }
+    select, input[type="date"], input[type="text"], input[type="number"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #1f2328;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    select:focus, input:focus { border-color: #3b82d4; }
+    .toggle-group {
+      display: flex;
+      gap: 0;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .toggle-group button {
+      flex: 1;
+      padding: 7px 0;
+      font-size: 13px;
+      border: none;
+      background: #f7f8fa;
+      color: #57606a;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .toggle-group button.active {
+      background: #1f2328;
+      color: #fff;
+      font-weight: 600;
+    }
+    .period-panel { display: none; gap: 12px; }
+    .period-panel.active { display: flex; align-items: flex-end; }
+    .period-panel .half { flex: 1; }
+    .period-panel select, .period-panel input { margin-top: 0; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 20px;
+      padding: 10px 24px;
+      background: #3b82d4;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #2563eb; }
+    .btn:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .btn.loading .spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #result-card { display: none; }
+    #result-card.visible { display: block; }
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .result-header h2 { font-size: 15px; font-weight: 600; }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+    #result-body {
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+    }
+    /* Markdown-like table */
+    #result-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+    #result-body th, #result-body td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
+    #result-body th { background: #f7f8fa; font-weight: 600; }
+    .error-msg {
+      color: #dc2626;
+      font-size: 13px;
+      margin-top: 10px;
+      display: none;
+    }
+    footer {
+      text-align: center;
+      font-size: 12px;
+      color: #57606a;
+      border-top: 1px solid #e5e7eb;
+      padding: 16px;
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🌏 海外出張リスク分析</h1>
+  <span>Powered by Gemini + Tavily</span>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h2>出張情報の入力</h2>
+
+    <label for="destination">渡航先</label>
+    <select id="destination">
+      <optgroup label="東南アジア">
+        <option value="バンコク（タイ）">バンコク（タイ）</option>
+        <option value="シンガポール">シンガポール</option>
+        <option value="クアラルンプール（マレーシア）">クアラルンプール（マレーシア）</option>
+        <option value="ジャカルタ（インドネシア）">ジャカルタ（インドネシア）</option>
+        <option value="ホーチミン（ベトナム）">ホーチミン（ベトナム）</option>
+        <option value="ハノイ（ベトナム）">ハノイ（ベトナム）</option>
+        <option value="マニラ（フィリピン）">マニラ（フィリピン）</option>
+      </optgroup>
+      <optgroup label="東アジア">
+        <option value="上海（中国）">上海（中国）</option>
+        <option value="北京（中国）">北京（中国）</option>
+        <option value="香港">香港</option>
+        <option value="台北（台湾）">台北（台湾）</option>
+        <option value="ソウル（韓国）">ソウル（韓国）</option>
+      </optgroup>
+      <optgroup label="南アジア">
+        <option value="ムンバイ（インド）">ムンバイ（インド）</option>
+        <option value="ニューデリー（インド）">ニューデリー（インド）</option>
+        <option value="ベンガルール（インド）">ベンガルール（インド）</option>
+      </optgroup>
+      <optgroup label="中東・アフリカ">
+        <option value="ドバイ（UAE）">ドバイ（UAE）</option>
+        <option value="ナイロビ（ケニア）">ナイロビ（ケニア）</option>
+      </optgroup>
+      <optgroup label="欧州">
+        <option value="ロンドン（イギリス）">ロンドン（イギリス）</option>
+        <option value="パリ（フランス）">パリ（フランス）</option>
+        <option value="フランクフルト（ドイツ）">フランクフルト（ドイツ）</option>
+        <option value="アムステルダム（オランダ）">アムステルダム（オランダ）</option>
+      </optgroup>
+      <optgroup label="北米">
+        <option value="ニューヨーク（アメリカ）">ニューヨーク（アメリカ）</option>
+        <option value="サンフランシスコ（アメリカ）">サンフランシスコ（アメリカ）</option>
+        <option value="シカゴ（アメリカ）">シカゴ（アメリカ）</option>
+        <option value="トロント（カナダ）">トロント（カナダ）</option>
+      </optgroup>
+      <optgroup label="その他">
+        <option value="__other__">その他（直接入力）</option>
+      </optgroup>
+    </select>
+    <div id="other-input-wrap" style="display:none; margin-top:8px;">
+      <input type="text" id="destination-other" placeholder="例：ケープタウン（南アフリカ）">
+    </div>
+
+    <label>出張期間の指定方法</label>
+    <div class="toggle-group">
+      <button class="active" data-panel="days" onclick="switchPanel(this)">日数指定</button>
+      <button data-panel="range" onclick="switchPanel(this)">期間指定</button>
+      <button data-panel="months" onclick="switchPanel(this)">月数指定</button>
+    </div>
+
+    <!-- 日数指定 -->
+    <div id="panel-days" class="period-panel active">
+      <div class="half">
+        <label for="start-date-days">出発日</label>
+        <input type="date" id="start-date-days">
+      </div>
+      <div class="half">
+        <label for="num-days">日数</label>
+        <select id="num-days">
+          <option value="2">2日</option>
+          <option value="3" selected>3日</option>
+          <option value="4">4日</option>
+          <option value="5">5日</option>
+          <option value="7">7日（1週間）</option>
+          <option value="10">10日</option>
+          <option value="14">14日（2週間）</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 期間指定 -->
+    <div id="panel-range" class="period-panel">
+      <div class="half">
+        <label for="start-date-range">出発日</label>
+        <input type="date" id="start-date-range">
+      </div>
+      <div class="half">
+        <label for="end-date-range">帰着日</label>
+        <input type="date" id="end-date-range">
+      </div>
+    </div>
+
+    <!-- 月数指定 -->
+    <div id="panel-months" class="period-panel">
+      <div class="half">
+        <label for="start-date-months">出発日</label>
+        <input type="date" id="start-date-months">
+      </div>
+      <div class="half">
+        <label for="num-months">月数</label>
+        <select id="num-months">
+          <option value="1">1か月</option>
+          <option value="2">2か月</option>
+          <option value="3" selected>3か月</option>
+          <option value="6">6か月</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="purpose">出張目的（任意）</label>
+    <input type="text" id="purpose" placeholder="例：顧客訪問、展示会参加、プロジェクト立ち上げ">
+
+    <button class="btn" id="submit-btn" onclick="submitQuery()">
+      <div class="spinner"></div>
+      リスクを分析する
+    </button>
+    <div class="error-msg" id="error-msg"></div>
+  </div>
+
+  <div class="card" id="result-card">
+    <div class="result-header">
+      <h2>分析結果</h2>
+      <span class="badge" id="result-badge"></span>
+    </div>
+    <div id="result-body"></div>
+  </div>
+</div>
+
+<footer>Made with IBM Bob</footer>
+
+<script>
+  // 今日の日付をデフォルトにセット
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('start-date-days').value = today;
+  document.getElementById('start-date-range').value = today;
+  document.getElementById('start-date-months').value = today;
+
+  // 渡航先「その他」切り替え
+  document.getElementById('destination').addEventListener('change', function() {
+    document.getElementById('other-input-wrap').style.display =
+      this.value === '__other__' ? 'block' : 'none';
+  });
+
+  // 期間パネル切り替え
+  let currentPanel = 'days';
+  function switchPanel(btn) {
+    document.querySelectorAll('.toggle-group button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.period-panel').forEach(p => p.classList.remove('active'));
+    currentPanel = btn.dataset.panel;
+    document.getElementById('panel-' + currentPanel).classList.add('active');
+  }
+
+  // 日付フォーマット（YYYY年MM月DD日）
+  function formatDate(dateStr) {
+    const d = new Date(dateStr);
+    return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  }
+
+  // クエリ文字列を組み立て
+  function buildQuery() {
+    const destSel = document.getElementById('destination').value;
+    const dest = destSel === '__other__'
+      ? document.getElementById('destination-other').value.trim()
+      : destSel;
+    if (!dest) return null;
+
+    const purpose = document.getElementById('purpose').value.trim();
+    const purposeStr = purpose ? `目的：${purpose}。` : '';
+
+    if (currentPanel === 'days') {
+      const start = document.getElementById('start-date-days').value;
+      const days = document.getElementById('num-days').value;
+      if (!start) return null;
+      return `${formatDate(start)}から${days}日間、${dest}に出張します。${purposeStr}リスクを洗い出してください。`;
+    }
+    if (currentPanel === 'range') {
+      const start = document.getElementById('start-date-range').value;
+      const end = document.getElementById('end-date-range').value;
+      if (!start || !end) return null;
+      return `${formatDate(start)}から${formatDate(end)}まで、${dest}に出張します。${purposeStr}リスクを洗い出してください。`;
+    }
+    if (currentPanel === 'months') {
+      const start = document.getElementById('start-date-months').value;
+      const months = document.getElementById('num-months').value;
+      if (!start) return null;
+      return `${formatDate(start)}から${months}か月間、${dest}に出張します。${purposeStr}リスクを洗い出してください。`;
+    }
+    return null;
+  }
+
+  // マークダウン簡易レンダリング
+  function renderMarkdown(text) {
+    return text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^### (.+)$/gm, '<h3 style="margin:14px 0 4px;font-size:14px;font-weight:600;">$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2 style="margin:16px 0 6px;font-size:15px;font-weight:600;">$1</h2>')
+      .replace(/^\| (.+) \|$/gm, (_, row) => {
+        const cells = row.split(' | ');
+        return '<tr>' + cells.map(c => `<td>${c.replace(/:---/g,'').trim()}</td>`).join('') + '</tr>';
+      })
+      .replace(/(<tr>.*<\/tr>\n?)+/gs, m => `<table>${m}</table>`)
+      .replace(/^- \[ \] (.+)$/gm, '<li style="list-style:none;margin:4px 0;">☐ $1</li>')
+      .replace(/^- (.+)$/gm, '<li style="margin:3px 0 3px 16px;">$1</li>')
+      .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+  }
+
+  async function submitQuery() {
+    const query = buildQuery();
+    if (!query) {
+      showError('渡航先と出発日を入力してください。');
+      return;
+    }
+    const btn = document.getElementById('submit-btn');
+    const errorEl = document.getElementById('error-msg');
+    errorEl.style.display = 'none';
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.querySelector('.spinner').style.display = 'block';
+
+    const resultCard = document.getElementById('result-card');
+    const resultBody = document.getElementById('result-body');
+    const resultBadge = document.getElementById('result-badge');
+    resultCard.classList.remove('visible');
+
+    try {
+      const res = await fetch('/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'web-' + Date.now(),
+          method: 'message/send',
+          params: { message: { parts: [{ kind: 'text', text: query }] } }
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.result?.status?.message?.parts?.[0]?.text || '（応答なし）';
+      resultBody.innerHTML = renderMarkdown(text);
+      resultBadge.textContent = new Date().toLocaleString('ja-JP');
+      resultCard.classList.add('visible');
+      resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      showError('エラーが発生しました：' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+    }
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
 
@@ -13,6 +14,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("a2a-travel-agent")
 
 app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
+
+# 静的ファイル配信（/app 以下に static ディレクトリがある場合のみ）
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/ui", StaticFiles(directory=_static_dir, html=True), name="static")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None

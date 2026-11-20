@@ -97,6 +97,56 @@ def extract_travel_info(user_text: str) -> Dict[str, Any]:
     return fallback
 
 
+def get_mofa_safety_level(destination: str) -> str:
+    """外務省海外安全情報から渡航先の危険度レベルを取得して返す。
+    返り値例: "レベル1（十分注意）"、取得失敗時は空文字を返す。
+    """
+    if not TAVILY_API_KEY:
+        logger.info("TAVILY_API_KEY not set, skipping MOFA safety check")
+        return ""
+    try:
+        from tavily import TavilyClient
+        tavily = TavilyClient(api_key=TAVILY_API_KEY)
+        query = f"外務省 {destination} 危険情報 安全レベル"
+        logger.info(f"MOFA safety search: {query}")
+        result = tavily.search(
+            query=query,
+            max_results=3,
+            search_depth="basic",
+            include_domains=["anzen.mofa.go.jp"],
+        )
+        snippets = []
+        for item in result.get("results", []):
+            content = item.get("content", "")
+            if content:
+                snippets.append(content[:500])
+        if not snippets:
+            return ""
+        # Gemini で危険度レベルのみ抽出
+        if not client:
+            return "\n".join(snippets[:2])
+        import json as _json
+        combined = "\n".join(snippets[:3])
+        config = types.GenerateContentConfig(temperature=0.0)
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=(
+                f"以下は外務省の海外安全情報のテキストです。\n"
+                f"「{destination}」の渡航先危険度レベルを、地域によって異なる場合はすべて列挙して、\n"
+                f"簡潔に日本語で返してください（例: レベル1（十分注意）/ 国境付近はレベル3）。\n"
+                f"情報が見つからない場合は「情報なし」と返してください。\n\n"
+                f"テキスト：\n{combined}"
+            ),
+            config=config,
+        )
+        level_text = _extract_response_text(response).strip()
+        logger.info(f"MOFA safety level for {destination!r}: {level_text}")
+        return level_text
+    except Exception as e:
+        logger.warning(f"MOFA safety check failed: {e}")
+        return ""
+
+
 def search_travel_context(user_text: str) -> Optional[str]:
     """渡航先・渡航月を抽出し、Tavily で最新情報を検索して返す。APIキー未設定または失敗時は None を返す。"""
     if not TAVILY_API_KEY:
@@ -281,14 +331,24 @@ def build_agent_card(base_url: str) -> Dict[str, Any]:
         "defaultOutputModes": ["text/plain"],
         "skills": [
             {
-                "id": "travel_risk_assessment",
-                "name": "海外出張リスク分析",
-                "description": "渡航先や日程に基づき、治安・健康・入国手続きのリスクと推奨アクションを分析します。",
-                "tags": ["travel", "risk", "safety", "compliance"],
+                "id": "mofa_safety_check",
+                "name": "外務省安全情報確認",
+                "description": "外務省の海外安全情報をもとに渡航先の危険度レベルを返します。メッセージの先頭に「[外務省安全確認]」を付けて渡航先を送信してください。",
+                "tags": ["safety", "mofa", "risk-level"],
                 "examples": [
-                    "来月、インドのベンガルールに5日間出張します。リスクと準備事項を教えてください。"
+                    "[外務省安全確認] バンコク",
+                    "[外務省安全確認] モスクワ",
                 ],
-            }
+            },
+            {
+                "id": "travel_report",
+                "name": "渡航先情報レポート",
+                "description": "渡航先・期間に基づき、治安・気候・注意事項・現地イベント等の実態情報を提供します。",
+                "tags": ["travel", "report", "local-info"],
+                "examples": [
+                    "来月バンコクに1週間行きます。現地情報を教えてください。"
+                ],
+            },
         ],
     }
 
@@ -357,22 +417,35 @@ async def a2a_rpc_endpoint(request: Request):
     method = body.get("method", "")
     params = body.get("params", {})
     logger.info(f"Received A2A RPC method={method} id={rpc_id}")
+    logger.info(f"[DEBUG] params keys={list(params.keys())}")
+    logger.info(f"[DEBUG] params.skillId={params.get('skillId')} params.skill={params.get('skill')}")
+    _msg = params.get("message", {})
+    logger.info(f"[DEBUG] message.parts={_msg.get('parts', [])[:2]}")
 
     if method in ("message/send", "tasks/send"):
         user_text = extract_user_text(params)
-        prompt = await asyncio.to_thread(build_prompt_with_context, user_text)
-        try:
-            reply_text = await call_gemini(prompt)
-        except Exception as e:
-            logger.error(f"A2A call_gemini failed: {e}")
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "jsonrpc": "2.0",
-                    "id": rpc_id,
-                    "error": {"code": -32000, "message": str(e)},
-                },
-            )
+
+        # 外務省安全確認モード：メッセージ先頭に "[外務省安全確認]" がある場合
+        if user_text.strip().startswith("[外務省安全確認]"):
+            destination = user_text.strip().removeprefix("[外務省安全確認]").strip()
+            logger.info(f"MOFA safety check mode: destination={destination!r}")
+            level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
+            reply_text = level_text if level_text else "外務省の安全情報を取得できませんでした。外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）で直接ご確認ください。"
+        else:
+            # 通常モード：渡航レポート
+            prompt = await asyncio.to_thread(build_prompt_with_context, user_text)
+            try:
+                reply_text = await call_gemini(prompt)
+            except Exception as e:
+                logger.error(f"A2A call_gemini failed: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "jsonrpc": "2.0",
+                        "id": rpc_id,
+                        "error": {"code": -32000, "message": str(e)},
+                    },
+                )
 
         task_id = params.get("id") or str(uuid.uuid4())
         context_id = params.get("contextId") or str(uuid.uuid4())

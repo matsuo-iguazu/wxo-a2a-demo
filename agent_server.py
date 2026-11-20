@@ -50,12 +50,12 @@ SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT
 
 
 def extract_travel_info(user_text: str) -> Dict[str, Any]:
-    """Gemini を使ってユーザー入力から渡航先と渡航月リストを抽出する。
-    返り値例: {"destination": "バンコク", "months": [11, 12]}
-    失敗時は {"destination": user_text[:30], "months": []} を返す。
+    """Gemini を使ってユーザー入力から渡航先と渡航月リスト（年付き）を抽出する。
+    返り値例: {"destination": "バンコク", "periods": [{"year": 2026, "month": 11}, {"year": 2026, "month": 12}]}
+    失敗時は {"destination": user_text[:30], "periods": []} を返す。
     """
     import datetime
-    fallback = {"destination": user_text[:30].strip(), "months": []}
+    fallback = {"destination": user_text[:30].strip(), "periods": []}
     if not client:
         return fallback
     try:
@@ -66,24 +66,27 @@ def extract_travel_info(user_text: str) -> Dict[str, Any]:
             model="gemini-3.1-flash-lite",
             contents=(
                 f"今日は{now.year}年{now.month}月{now.day}日です。\n"
-                "次の文章から渡航先と渡航期間に含まれる月をすべて抽出してください。\n"
+                "次の文章から渡航先と渡航期間に含まれる年月をすべて抽出してください。\n"
                 "必ず以下のJSON形式のみを出力してください。それ以外は一切出力しないでください。\n"
-                '{"destination": "都市名または国名", "months": [月の数字, ...]}\n'
-                "月は1〜12の整数のリストで、渡航開始月から終了月まですべて含めてください。\n"
+                '{"destination": "都市名または国名", "periods": [{"year": 年, "month": 月}, ...]}\n'
+                "periodsは渡航開始月から終了月まで順番にすべて列挙してください。年をまたぐ場合も正確に。\n"
                 "渡航先が不明な場合はdestinationを空文字にしてください。\n\n"
                 f"文章：{user_text}"
             ),
             config=config,
         )
         raw = _extract_response_text(response).strip()
-        # コードブロックの除去
         raw = raw.strip("` \n").removeprefix("json").strip()
         data = json.loads(raw)
         destination = str(data.get("destination", "")).strip()
-        months = [int(m) for m in data.get("months", []) if 1 <= int(m) <= 12]
+        periods = [
+            {"year": int(p["year"]), "month": int(p["month"])}
+            for p in data.get("periods", [])
+            if 1 <= int(p.get("month", 0)) <= 12
+        ]
         if destination:
-            logger.info(f"Extracted travel info: destination={destination!r}, months={months}")
-            return {"destination": destination, "months": months}
+            logger.info(f"Extracted travel info: destination={destination!r}, periods={periods}")
+            return {"destination": destination, "periods": periods}
     except Exception as e:
         logger.warning(f"Travel info extraction failed: {e}")
     return fallback
@@ -97,17 +100,17 @@ def search_travel_context(user_text: str) -> Optional[str]:
     import datetime
     info = extract_travel_info(user_text)
     destination = info["destination"]
-    months = info["months"]
+    periods = info["periods"]
     now = datetime.datetime.now()
-    # 渡航月が取れた場合は最初の月と最後の月を使う、取れなかった場合は現在月
-    if months:
-        month_str = "・".join(f"{m}月" for m in sorted(set(months)))
+    # 渡航期間の年月文字列を生成（年をまたぐ場合も正確に）
+    if periods:
+        period_str = "・".join(f"{p['year']}年{p['month']}月" for p in periods)
     else:
-        month_str = f"{now.month}月"
+        period_str = f"{now.year}年{now.month}月"
     queries = [
         f"{destination} 治安 安全情報 最新",
-        f"{destination} {month_str} 気候 季節",
-        f"{destination} {month_str} イベント 祝日",
+        f"{destination} {period_str} 気候 季節",
+        f"{destination} {period_str} イベント 祝日",
     ]
     try:
         from tavily import TavilyClient

@@ -157,16 +157,14 @@ A2A レスポンスで返却
 ### モデル優先順位（`PREFERRED_MODELS`）
 
 ```python
-PRIMARY_MODEL = "gemini-2.0-flash"  # 404 → 自動スキップ
+PRIMARY_MODEL = "gemini-3.1-flash-lite"  # プライマリ ✅
 PREFERRED_MODELS = [
-    "gemini-2.0-flash",      # 404（廃止） → 自動スキップ
-    "gemini-2.5-flash-lite", # 404（新規ユーザー廃止） → 自動スキップ
-    "gemini-3.1-flash-lite", # search=True → 429、search=False → 200 OK ✅ 実質ここで動作
+    "gemini-3.1-flash-lite", # search=False → 200 OK ✅ プライマリ
     "gemma-4-26b-a4b-it",    # 最終保険（search=False）
 ]
 ```
 
-> **TODO**：`gemini-2.0-flash` と `gemini-2.5-flash-lite`（404）を除去し、`gemini-3.1-flash-lite` をプライマリに変更するとクリーンになる。現状は動作に問題ないが無駄なリクエストが発生している。
+> 廃止済みの `gemini-2.0-flash`・`gemini-2.5-flash-lite` を除去。Tavily で検索結果をプロンプトに付加する構成のため Google Search Grounding は不要。
 
 ### フォールバック戦略
 

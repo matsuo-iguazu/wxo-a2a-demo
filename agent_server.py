@@ -112,6 +112,17 @@ def search_travel_context(user_text: str) -> Optional[str]:
         f"{destination} {period_str} 気候 季節",
         f"{destination} {period_str} イベント 祝日",
     ]
+    # 出発が今月または翌月以内なら天気予報クエリを追加
+    if periods:
+        first = periods[0]
+        is_near = (
+            first["year"] == now.year and first["month"] <= now.month + 1
+        ) or (
+            first["year"] == now.year + 1 and now.month == 12 and first["month"] == 1
+        )
+        if is_near:
+            queries.append(f"{destination} 天気予報 今週 来週")
+            logger.info("Added weather forecast query (departure is near)")
     try:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=TAVILY_API_KEY)

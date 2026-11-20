@@ -341,19 +341,48 @@
 
   // マークダウン簡易レンダリング
   function renderMarkdown(text) {
-    return text
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/^### (.+)$/gm, '<h3 style="margin:14px 0 4px;font-size:14px;font-weight:600;">$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2 style="margin:16px 0 6px;font-size:15px;font-weight:600;">$1</h2>')
-      .replace(/^\| (.+) \|$/gm, (_, row) => {
-        const cells = row.split(' | ');
-        return '<tr>' + cells.map(c => `<td>${c.replace(/:---/g,'').trim()}</td>`).join('') + '</tr>';
-      })
-      .replace(/(<tr>.*<\/tr>\n?)+/gs, m => `<table>${m}</table>`)
-      .replace(/^- \[ \] (.+)$/gm, '<li style="list-style:none;margin:4px 0;">☐ $1</li>')
-      .replace(/^- (.+)$/gm, '<li style="margin:3px 0 3px 16px;">$1</li>')
-      .replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
+    // エスケープ
+    let html = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // タイトル行【...】を大きく表示
+    html = html.replace(/^(【.+】)$/gm,
+      '<div style="font-size:17px;font-weight:700;margin:0 0 12px;">$1</div>');
+
+    // 見出し
+    html = html.replace(/^### (.+)$/gm,
+      '<h3 style="margin:16px 0 4px;font-size:14px;font-weight:600;border-left:3px solid #3b82d4;padding-left:8px;">$1</h3>');
+    html = html.replace(/^## (.+)$/gm,
+      '<h2 style="margin:18px 0 6px;font-size:15px;font-weight:600;">$1</h2>');
+
+    // 太字
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // テーブル（:---行はスキップ）
+    html = html.replace(/^\|(.+)\|$/gm, (_, row) => {
+      const cells = row.split('|').map(c => c.trim());
+      if (cells.every(c => /^:?-+:?$/.test(c))) return '';  // 区切り行をスキップ
+      return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+    });
+    html = html.replace(/(<tr>[\s\S]*?<\/tr>)/g, m => {
+      if (m.includes('<table>')) return m;
+      return m;
+    });
+    html = html.replace(/(<tr>.*?<\/tr>\s*)+/gs, m => `<table>${m}</table>`);
+
+    // チェックリスト・箇条書き
+    html = html.replace(/^- \[ \] (.+)$/gm,
+      '<div style="margin:4px 0;">☐ $1</div>');
+    html = html.replace(/^- (.+)$/gm,
+      '<div style="margin:3px 0 3px 16px;">• $1</div>');
+
+    // 連続する空行を1つのスペースに圧縮してからブロックに変換
+    html = html.replace(/\n{3,}/g, '\n\n');
+    html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
+    html = html.replace(/\n/g, '<br>');
+    html = '<p style="margin:0;">' + html + '</p>';
+
+    return html;
   }
 
   async function submitQuery() {

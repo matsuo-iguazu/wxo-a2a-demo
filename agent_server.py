@@ -107,34 +107,46 @@ def get_mofa_safety_level(destination: str) -> str:
     try:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=TAVILY_API_KEY)
-        query = f"外務省 {destination} 危険情報 安全レベル"
-        logger.info(f"MOFA safety search: {query}")
-        result = tavily.search(
-            query=query,
-            max_results=3,
-            search_depth="basic",
-            include_domains=["anzen.mofa.go.jp"],
-        )
+        # 2クエリで引く：国名レベルの情報ページが返りやすいよう「危険情報」を先に、次点で渡航先名を含める
+        queries = [
+            f"{destination} 危険情報",
+            f"{destination} 危険情報 レベル",
+        ]
         snippets = []
-        for item in result.get("results", []):
-            content = item.get("content", "")
-            if content:
-                snippets.append(content[:500])
+        seen_urls: set = set()
+        for query in queries:
+            logger.info(f"MOFA safety search: {query}")
+            result = tavily.search(
+                query=query,
+                max_results=3,
+                search_depth="basic",
+                include_domains=["anzen.mofa.go.jp"],
+            )
+            for item in result.get("results", []):
+                url = item.get("url", "")
+                content = item.get("content", "")
+                if url not in seen_urls and content:
+                    seen_urls.add(url)
+                    # 長めに取る（後半にレベル情報が含まれることが多い）
+                    snippets.append(content[:1500])
+            if snippets:
+                break  # 1クエリで取れたら2本目は不要
         if not snippets:
+            logger.warning(f"MOFA: no results for {destination!r}")
             return ""
         # Gemini で危険度レベルのみ抽出
         if not client:
             return "\n".join(snippets[:2])
-        import json as _json
-        combined = "\n".join(snippets[:3])
+        combined = "\n\n---\n\n".join(snippets[:3])
         config = types.GenerateContentConfig(temperature=0.0)
         response = client.models.generate_content(
             model="gemini-3.1-flash-lite",
             contents=(
                 f"以下は外務省の海外安全情報のテキストです。\n"
-                f"「{destination}」の渡航先危険度レベルを、地域によって異なる場合はすべて列挙して、\n"
-                f"簡潔に日本語で返してください（例: レベル1（十分注意）/ 国境付近はレベル3）。\n"
-                f"情報が見つからない場合は「情報なし」と返してください。\n\n"
+                f"「{destination}」に関する渡航先危険度レベルを読み取り、\n"
+                f"地域ごとに異なる場合はすべて列挙して簡潔に日本語で返してください。\n"
+                f"出力例：「バンコクを含む一般地域：レベル1（十分注意）/ 南部国境付近：レベル3（渡航中止勧告）」\n"
+                f"テキスト内にレベル情報がない場合のみ「情報なし」と返してください。\n\n"
                 f"テキスト：\n{combined}"
             ),
             config=config,

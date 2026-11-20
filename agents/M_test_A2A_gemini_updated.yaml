@@ -1,7 +1,7 @@
 spec_version: v1
 kind: native
 name: Untitled_Agent_1_0061NH
-display_name: 海外出張アドミ支援エージェント
+display_name: M_test_A2A_gemini
 description: 海外出張が決まったら何でも聞いてください。社内規程に基づく手続き案内・現地情報の取得・申請書ドラフト作成まで一貫してサポートします。
 context_access_enabled: true
 context_variables: []
@@ -108,8 +108,8 @@ starter_prompts:
     prompt: 来月イスタンブールに出張することになりました。
     state: active
 welcome_content:
-  welcome_message: 海外出張サポートへようこそ
-  description: 出張が決まったら教えてください。規程確認・リスク調査・申請書作成まで一貫してサポートします。
+  welcome_message: 出張のお手伝いをします
+  description: 渡航先と期間を教えていただければ、必要な手続きの確認から現地情報の取得、申請書の作成まで一通りサポートします。
   is_default_message: false
   is_user_barge_in_disabled: false
   is_default_voice_greeting: false

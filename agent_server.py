@@ -49,20 +49,65 @@ DEFAULT_SYSTEM_INSTRUCTION = """
 SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT_SYSTEM_INSTRUCTION
 
 
+def extract_travel_info(user_text: str) -> Dict[str, Any]:
+    """Gemini を使ってユーザー入力から渡航先と渡航月リストを抽出する。
+    返り値例: {"destination": "バンコク", "months": [11, 12]}
+    失敗時は {"destination": user_text[:30], "months": []} を返す。
+    """
+    import datetime
+    fallback = {"destination": user_text[:30].strip(), "months": []}
+    if not client:
+        return fallback
+    try:
+        import json
+        now = datetime.datetime.now()
+        config = types.GenerateContentConfig(temperature=0.0)
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=(
+                f"今日は{now.year}年{now.month}月{now.day}日です。\n"
+                "次の文章から渡航先と渡航期間に含まれる月をすべて抽出してください。\n"
+                "必ず以下のJSON形式のみを出力してください。それ以外は一切出力しないでください。\n"
+                '{"destination": "都市名または国名", "months": [月の数字, ...]}\n'
+                "月は1〜12の整数のリストで、渡航開始月から終了月まですべて含めてください。\n"
+                "渡航先が不明な場合はdestinationを空文字にしてください。\n\n"
+                f"文章：{user_text}"
+            ),
+            config=config,
+        )
+        raw = _extract_response_text(response).strip()
+        # コードブロックの除去
+        raw = raw.strip("` \n").removeprefix("json").strip()
+        data = json.loads(raw)
+        destination = str(data.get("destination", "")).strip()
+        months = [int(m) for m in data.get("months", []) if 1 <= int(m) <= 12]
+        if destination:
+            logger.info(f"Extracted travel info: destination={destination!r}, months={months}")
+            return {"destination": destination, "months": months}
+    except Exception as e:
+        logger.warning(f"Travel info extraction failed: {e}")
+    return fallback
+
+
 def search_travel_context(user_text: str) -> Optional[str]:
-    """ユーザー入力の先頭50文字をキーワードにし、Tavily で最新情報を複数クエリで検索して返す。APIキー未設定または失敗時は None を返す。"""
+    """渡航先・渡航月を抽出し、Tavily で最新情報を検索して返す。APIキー未設定または失敗時は None を返す。"""
     if not TAVILY_API_KEY:
         logger.info("TAVILY_API_KEY not set, skipping web search")
         return None
     import datetime
-    destination = user_text[:50].strip()
-    logger.info(f"Search keyword: {destination!r}")
+    info = extract_travel_info(user_text)
+    destination = info["destination"]
+    months = info["months"]
     now = datetime.datetime.now()
-    year, month = now.year, now.month
+    # 渡航月が取れた場合は最初の月と最後の月を使う、取れなかった場合は現在月
+    if months:
+        month_str = "・".join(f"{m}月" for m in sorted(set(months)))
+    else:
+        month_str = f"{now.month}月"
     queries = [
-        f"{destination} 治安 安全情報 {year}年{month}月",
-        f"{destination} 天気 {year}年{month}月",
-        f"{destination} イベント 祝日 {year}年{month}月",
+        f"{destination} 治安 安全情報 最新",
+        f"{destination} {month_str} 気候 季節",
+        f"{destination} {month_str} イベント 祝日",
     ]
     try:
         from tavily import TavilyClient

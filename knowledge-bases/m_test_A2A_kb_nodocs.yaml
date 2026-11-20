@@ -1,0 +1,28 @@
+spec_version: v1
+kind: knowledge_base
+name: m_test_A2A_kb
+description: |
+  海外出張デモ用ナレッジベース。
+  社内出張規程（危険度レベル・出張可否・費用規程・申請手続き・保険要件）を収録。
+  海外出張の申請可否判定・申請書ドラフト生成・規程照合に使用する。
+documents:
+  - travel_policy.txt
+vector_index:
+  embeddings_model_name: ibm/granite-embedding-278m-multilingual
+  chunk_size: 400
+  chunk_overlap: 50
+  extraction_strategy: standard
+conversational_search_tool:
+  language: ja
+  generation:
+    enabled: false
+  query_rewrite:
+    enabled: true
+  citations:
+    citation_title: 規程の根拠
+    citations_shown: 3
+  confidence_thresholds:
+    retrieval_confidence_threshold: Lowest
+    response_confidence_threshold: Lowest
+  query_source: Agent
+  agent_query_description: 海外出張規程の照合・申請書作成に必要な情報を検索するクエリ

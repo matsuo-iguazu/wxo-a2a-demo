@@ -5,6 +5,27 @@
 
 ---
 
+## ⚠️ wxO 環境操作ルール（必読・厳守）
+
+**対象リソース以外には絶対にアクセス・更新・削除しないこと。**
+
+| 種別 | 対象リソース名 | 備考 |
+|---|---|---|
+| エージェント | `M_test_A2A_gemini` | 表示名 |
+| ナレッジベース | `m_test_A2A_kb` | このプロジェクトで新規作成するもの |
+
+### 認証について
+- wxO SaaS 環境への認証は**人間が行う**（Bob/AIは認証操作を行わない）
+- 認証セッションは**約1時間で切れる**
+- 操作前に認証が有効かどうかを確認してから進めること
+- 切れていた場合は人間に再認証を依頼してから再開する
+
+### ナレッジベースのベクトルLLM設定
+- KBのベクトルLLMは**デフォルトではなく `multilingual` のものを使用**すること
+- 作成時に必ず設定を確認・変更する
+
+---
+
 ## 0. システムトポロジー（最新）
 
 ```mermaid
@@ -195,7 +216,7 @@ PREFERRED_MODELS = [
 
 ---
 
-## 6. 次フェーズ：wxO エージェント拡張（MCP 設定後に着手）
+## 6. 次フェーズ：wxO エージェント拡張（完了）
 
 ### 方針
 
@@ -207,17 +228,45 @@ PREFERRED_MODELS = [
 
 ### タスク一覧
 
-- [ ] **wxO エージェントに出張意図検知スキルを追加**（「来月〜に行く」「〜出張」等のトリガーワード）
-- [ ] **出張規程サンプルドキュメントを作成**（危険度レベル・日当・承認フロー・保険等）
-- [ ] **wxO 知識ベースに出張規程を登録**
-- [ ] **申請書ドラフト生成スキルを追加**（渡航先・期間・目的 → 申請書フォーマット出力）
-- [ ] **規程照合ロジックを追加**（危険度が規程の上限を超えたら「出張不可」を返す）
+- [x] **出張規程サンプルドキュメントを作成**（危険度レベル・日当・承認フロー・保険等）
+  - ファイル：`knowledge-bases/travel_policy.md`（表示用）・`knowledge-bases/travel_policy.txt`（KB登録用）
+- [x] **wxO 知識ベース `m_test_A2A_kb` を作成・出張規程を登録**
+  - KB ID：`0a53f0e9-8c41-4980-9037-66f4732db17b`
+  - 埋め込みモデル：`ibm/granite-embedding-278m-multilingual`（multilingual ✅）
+  - ドキュメント：`travel_policy.txt`（1件、6.7 KB）、インデックス状態：`ready`
+- [x] **エージェント `Untitled_Agent_1_0061NH`（表示名 `M_test_A2A_gemini`）を更新**
+  - `knowledge_base` に `m_test_A2A_kb` を追加
+  - `instructions` を出張リスクレポート・規程照合・申請書ドラフト生成の3機能対応に拡張
+  - スターターポロンプト・ウェルカムメッセージも日本語対応に更新
+  - **規程照合ロジック**：危険度レベル3・4の地域 → 「出張不可」を明示
+  - **申請書ドラフト生成**：渡航先・期間・目的等を収集して申請書フォーマット出力
+- [ ] **PREFERRED_MODELS の整理**：404 になる `gemini-2.0-flash` と `gemini-2.5-flash-lite` を除去し、`gemini-3.1-flash-lite` をプライマリに戻す
 
 ### 追加アイデア（将来）
-- 中東・危険地域の出張申請 → 「規程により出張不可」を返すデモ（インパクト大）
+- 中東・危険地域の出張申請 → 「規程により出張不可」を返すデモ（インパクト大）✅ 規程照合ロジック実装済みで対応可能
 
-### 優先度 中（コード整理）
-- [ ] **PREFERRED_MODELS の整理**：404 になる `gemini-2.0-flash` と `gemini-2.5-flash-lite` を除去し、`gemini-3.1-flash-lite` をプライマリに戻す
+### wxO エージェント構成（更新後）
+
+| 項目 | 値 |
+|---|---|
+| 内部 name | `Untitled_Agent_1_0061NH` |
+| 表示名 | `M_test_A2A_gemini` |
+| ID | `11c04a11-f68f-4ac9-9d48-6d5c4364513d` |
+| LLM | `bedrock/us.anthropic.claude-sonnet-4-6` |
+| collaborators | `agent_Gemini__4373as`（外部A2Aエージェント） |
+| knowledge_base | `m_test_A2A_kb` |
+| instructions | 出張リスクレポート・規程照合・申請書ドラフト生成の3機能対応 |
+
+### ナレッジベース KB ファイル
+
+| ファイル | 内容 |
+|---|---|
+| `knowledge-bases/travel_policy.md` | 出張規程サンプル（表示用・ソース管理用） |
+| `knowledge-bases/travel_policy.txt` | KB 登録用（.md は非サポートのため .txt でコピー） |
+| `knowledge-bases/m_test_A2A_kb.yaml` | KB スペックファイル（絶対パス版） |
+| `knowledge-bases/m_test_A2A_kb_nodocs.yaml` | KB スペックファイル（相対パス版・実際に使用） |
+| `agents/M_test_A2A_gemini_export.yaml` | エージェントエクスポート（更新前バックアップ） |
+| `agents/M_test_A2A_gemini_updated.yaml` | エージェント更新用 YAML |
 
 ---
 

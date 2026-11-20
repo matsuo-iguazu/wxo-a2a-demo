@@ -58,16 +58,20 @@ def extract_destination(user_text: str) -> str:
         response = client.models.generate_content(
             model="gemini-3.1-flash-lite",
             contents=(
-                "次の文章から渡航先の都市名または国名だけを抽出して返してください。"
-                "地名以外は一切出力しないでください。複数ある場合はカンマ区切りで。\n\n"
-                f"{user_text}"
+                "次の文章に含まれる渡航先の都市名または国名を抽出してください。\n"
+                "必ず地名のみを出力してください。説明文や「含まれていない」等の言葉は絶対に出力禁止です。\n"
+                "地名が複数ある場合はカンマ区切りで出力してください。\n"
+                "地名が見つからない場合は「不明」とだけ出力してください。\n\n"
+                f"文章：{user_text}"
             ),
             config=config,
         )
         destination = _extract_response_text(response).strip()
-        if destination:
+        # 説明文が返ってきた場合（長すぎる・「不明」以外の日本語）はフォールバック
+        if destination and len(destination) <= 30 and destination != "不明":
             logger.info(f"Extracted destination: {destination}")
             return destination
+        logger.warning(f"Destination extraction returned unexpected value: {destination!r}, falling back")
     except Exception as e:
         logger.warning(f"Destination extraction failed: {e}")
     return user_text

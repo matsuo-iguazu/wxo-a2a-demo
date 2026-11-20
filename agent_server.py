@@ -50,27 +50,34 @@ SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT
 
 
 def search_travel_context(destination: str) -> Optional[str]:
-    """Tavily で渡航先の最新情報を検索して返す。APIキー未設定または失敗時は None を返す。"""
+    """Tavily で渡航先の最新情報を複数クエリで検索して返す。APIキー未設定または失敗時は None を返す。"""
     if not TAVILY_API_KEY:
         logger.info("TAVILY_API_KEY not set, skipping web search")
         return None
+    import datetime
+    now = datetime.datetime.now()
+    year, month = now.year, now.month
+    queries = [
+        f"{destination} 治安 安全情報 {year}年{month}月",
+        f"{destination} 天気 {year}年{month}月",
+        f"{destination} イベント 祝日 {year}年{month}月",
+    ]
     try:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=TAVILY_API_KEY)
-        query = f"{destination} 渡航 治安 最新情報 2025"
-        logger.info(f"Tavily search: {query}")
-        result = tavily.search(query=query, max_results=3, search_depth="basic")
         snippets = []
-        for item in result.get("results", []):
-            title = item.get("title", "")
-            content = item.get("content", "")
-            url = item.get("url", "")
-            if content:
-                snippets.append(f"【{title}】{content[:300]} (出典: {url})")
+        for query in queries:
+            logger.info(f"Tavily search: {query}")
+            result = tavily.search(query=query, max_results=2, search_depth="basic")
+            for item in result.get("results", []):
+                title = item.get("title", "")
+                content = item.get("content", "")
+                url = item.get("url", "")
+                if content:
+                    snippets.append(f"【{title}】{content[:300]} (出典: {url})")
         if snippets:
-            context = "\n\n".join(snippets)
-            logger.info(f"Tavily search returned {len(snippets)} results")
-            return context
+            logger.info(f"Tavily search returned {len(snippets)} results total")
+            return "\n\n".join(snippets)
     except Exception as e:
         logger.warning(f"Tavily search failed: {e}")
     return None

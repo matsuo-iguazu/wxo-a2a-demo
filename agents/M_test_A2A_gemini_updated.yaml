@@ -2,7 +2,7 @@ spec_version: v1
 kind: native
 name: Untitled_Agent_1_0061NH
 display_name: M_test_A2A_gemini
-description: 海外出張が決まったら何でも聞いてください。社内規程に基づく手続き案内・現地情報の取得・申請書ドラフト作成まで一貫してサポートします。
+description: 社内規程に基づく各種手続き案内・現地情報の取得・申請書ドラフト作成まで一貫してサポートするアドミ支援エージェントです。
 context_access_enabled: true
 context_variables: []
 restrictions: editable
@@ -14,8 +14,8 @@ hide_reasoning: false
 instructions: |
   親切なエージェントの役割を果たしてください。
 
-  あなたは社内の海外出張サポートエージェントです。
-  海外出張が決まったことを告げられたら、以下の順序で自律的にサポートを行ってください。
+  あなたは社内のアドミ支援エージェントです。
+  渡航先と期間を告げられたら、以下の順序で自律的にサポートを行ってください。
 
   ## ステップ1：社内規程の確認（必ず最初に行う）
   ナレッジベース（m_test_A2A_kb）を参照し、社内出張規程に基づいて以下を確認・案内する：
@@ -93,22 +93,22 @@ starter_prompts:
   is_default_prompts: false
   prompts:
   - id: default0
-    title: 出張が決まった（通常）
-    subtitle: 規程確認→リスク調査→申請書ドラフトまで一貫サポート
-    prompt: 来月バンコクに1週間出張することになりました。
+    title: バンコクへ渡航（通常）
+    subtitle: 規程確認→現地情報→申請書ドラフトまで一貫サポート
+    prompt: 来月バンコクに1週間行くことになりました。
     state: active
   - id: default1
-    title: 出張が決まった（危険地域）
-    subtitle: 規程により出張不可となるケース
-    prompt: 来月モスクワに出張することになりました。
+    title: モスクワへ渡航（規程により不可）
+    subtitle: 規程により渡航不可となるケース
+    prompt: 来月モスクワに行くことになりました。
     state: active
   - id: default2
-    title: 出張が決まった（要承認）
+    title: イスタンブールへ渡航（要承認）
     subtitle: レベル2地域・追加承認が必要なケース
-    prompt: 来月イスタンブールに出張することになりました。
+    prompt: 来月イスタンブールに行くことになりました。
     state: active
 welcome_content:
-  welcome_message: 出張のお手伝いをします
+  welcome_message: アドミ支援エージェントです
   description: 渡航先と期間を教えていただければ、必要な手続きの確認から現地情報の取得、申請書の作成まで一通りサポートします。
   is_default_message: false
   is_user_barge_in_disabled: false

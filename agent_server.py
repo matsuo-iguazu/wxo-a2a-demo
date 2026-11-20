@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +16,8 @@ app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
 
 # 環境変数 GEMINI_MODEL があれば最優先、なければ gemini-2.0-flash を使用
 PRIMARY_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
@@ -45,6 +47,47 @@ DEFAULT_SYSTEM_INSTRUCTION = """
 
 # Render の Environment Variables に SYSTEM_INSTRUCTION を設定すればそちらが優先される
 SYSTEM_INSTRUCTION = os.environ.get("SYSTEM_INSTRUCTION", "").strip() or DEFAULT_SYSTEM_INSTRUCTION
+
+
+def search_travel_context(destination: str) -> Optional[str]:
+    """Tavily で渡航先の最新情報を検索して返す。APIキー未設定または失敗時は None を返す。"""
+    if not TAVILY_API_KEY:
+        logger.info("TAVILY_API_KEY not set, skipping web search")
+        return None
+    try:
+        from tavily import TavilyClient
+        tavily = TavilyClient(api_key=TAVILY_API_KEY)
+        query = f"{destination} 渡航 治安 最新情報 2025"
+        logger.info(f"Tavily search: {query}")
+        result = tavily.search(query=query, max_results=3, search_depth="basic")
+        snippets = []
+        for item in result.get("results", []):
+            title = item.get("title", "")
+            content = item.get("content", "")
+            url = item.get("url", "")
+            if content:
+                snippets.append(f"【{title}】{content[:300]} (出典: {url})")
+        if snippets:
+            context = "\n\n".join(snippets)
+            logger.info(f"Tavily search returned {len(snippets)} results")
+            return context
+    except Exception as e:
+        logger.warning(f"Tavily search failed: {e}")
+    return None
+
+
+def build_prompt_with_context(user_text: str) -> str:
+    """ユーザー入力から渡航先を推定し、Tavily で最新情報を取得してプロンプトに付加する。"""
+    context = search_travel_context(user_text)
+    if context:
+        return (
+            f"{user_text}\n\n"
+            f"---\n"
+            f"【参考：Web検索による最新情報】\n{context}\n"
+            f"---\n"
+            f"上記の最新情報も踏まえて回答してください。"
+        )
+    return user_text
 
 
 def get_model_candidates() -> List[str]:
@@ -182,9 +225,9 @@ async def health():
     return {
         "status": "ok",
         "api_key_configured": bool(GEMINI_API_KEY),
+        "tavily_configured": bool(TAVILY_API_KEY),
         "custom_system_instruction": bool(os.environ.get("SYSTEM_INSTRUCTION", "").strip()),
         "primary_model": PRIMARY_MODEL,
-        "search_enabled_for_gemini": True,
     }
 
 
@@ -244,8 +287,9 @@ async def a2a_rpc_endpoint(request: Request):
 
     if method in ("message/send", "tasks/send"):
         user_text = extract_user_text(params)
+        prompt = await asyncio.to_thread(build_prompt_with_context, user_text)
         try:
-            reply_text = await call_gemini(user_text)
+            reply_text = await call_gemini(prompt)
         except Exception as e:
             logger.error(f"A2A call_gemini failed: {e}")
             return JSONResponse(

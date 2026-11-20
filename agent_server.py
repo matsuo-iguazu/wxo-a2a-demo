@@ -120,9 +120,13 @@ def call_gemini_sync(prompt: str) -> str:
                 logger.warning(f"Model {model_name} (search={use_search}) failed: {err_str}")
                 errors.append(f"{model_name}[search={use_search}]: {err_str}")
 
-                # クォータ上限（429）の場合は同じモデルでの再試行をスキップして次へ進む
+                # クォータ上限（429）の場合、search=True で失敗した場合は search=False も試す
+                # search=False でも 429 なら次のモデルへスキップ
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    break
+                    if use_search:
+                        continue  # search=False で再試行
+                    else:
+                        break     # search=False でも 429 → 次のモデルへ
 
                 # 一時的な高負荷（503）の場合は3秒待ってから同一構成で1回だけリトライ
                 if "503" in err_str or "UNAVAILABLE" in err_str:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>海外出張リスク分析</title>
+  <title>海外出張 渡航レポート</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -146,7 +146,7 @@
 <body>
 
 <header>
-  <h1>🌏 海外出張リスク分析</h1>
+  <h1>🌏 海外出張 渡航レポート</h1>
   <span>Powered by Gemini + Tavily</span>
 </header>
 
@@ -262,14 +262,14 @@
 
     <button class="btn" id="submit-btn" onclick="submitQuery()">
       <div class="spinner"></div>
-      リスクを分析する
+      レポートを取得する
     </button>
     <div class="error-msg" id="error-msg"></div>
   </div>
 
   <div class="card" id="result-card">
     <div class="result-header">
-      <h2>分析結果</h2>
+      <h2>渡航レポート</h2>
       <span class="badge" id="result-badge"></span>
     </div>
     <div id="result-body"></div>
@@ -376,10 +376,15 @@
     html = html.replace(/^- (.+)$/gm,
       '<div style="margin:3px 0 3px 16px;">• $1</div>');
 
-    // 連続する空行を1つのスペースに圧縮してからブロックに変換
+    // ブロック要素（div/h2/h3/table）前後の余分な改行を除去
+    html = html.replace(/\n+(<(?:div|h2|h3|table))/g, '$1');
+    html = html.replace(/(\/(?:div|h2|h3|table)>)\n+/g, '$1');
+    // 連続する空行を圧縮してからブロックに変換
     html = html.replace(/\n{3,}/g, '\n\n');
     html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
     html = html.replace(/\n/g, '<br>');
+    // 空の <p> タグを除去
+    html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
     html = '<p style="margin:0;">' + html + '</p>';
 
     return html;
@@ -426,6 +431,7 @@
     } finally {
       btn.disabled = false;
       btn.classList.remove('loading');
+      btn.querySelector('.spinner').style.display = 'none';
     }
   }
 

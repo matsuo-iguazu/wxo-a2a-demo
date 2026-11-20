@@ -5,38 +5,39 @@
 
 ---
 
-## 0. システムトポロジー
+## 0. システムトポロジー（最新）
 
 ```mermaid
 sequenceDiagram
     actor User as ユーザー
     participant wxO as watsonx Orchestrate
     participant Render as Render<br/>(agent_server.py)
+    participant Tavily as Tavily Search API
     participant GeminiAPI as Gemini API<br/>(Google AI Studio)
-    participant Search as Google Search<br/>(Grounding)
 
     User->>wxO: 質問入力（例：バンコク出張のリスクは？）
     wxO->>Render: A2A RPC POST /<br/>method: message/send / JSON-RPC 2.0
     Note over Render: extract_user_text() でテキスト抽出
-    Render->>GeminiAPI: generateContent<br/>model: gemini-3.1-flash-lite + GoogleSearch Tool
-    GeminiAPI->>Search: Web検索クエリ発行（天気・ニュース・イベント等）
-    Search-->>GeminiAPI: 検索結果
-    GeminiAPI-->>Render: 200 OK（検索結果を含む生成テキスト）
+    Render->>Tavily: 渡航先の最新情報を検索<br/>（治安・ニュース・最新情勢）
+    Tavily-->>Render: 検索結果（最大3件）
+    Note over Render: 検索結果をプロンプトに付加
+    Render->>GeminiAPI: generateContent<br/>model: gemini-3.1-flash-lite
+    GeminiAPI-->>Render: 200 OK（生成テキスト）
     Note over Render: _extract_response_text() でテキスト抽出
     Render-->>wxO: JSON-RPC response<br/>status.state: "completed" / artifacts: [Travel Risk Report]
     wxO-->>User: エージェント応答表示
 ```
 
-> **補足**：`search=False`（Gemma系フォールバック時）は Google Search が呼ばれず1直線になる。
+> **補足**：`TAVILY_API_KEY` 未設定時は Tavily 検索をスキップして直接 Gemini に渡す。
 
 ---
 
 ## 1. プロジェクトの目的（要約）
 
 watsonx Orchestrate（wxO）から外部 A2A エージェントを接続するデモを構築する。  
-デモテーマは **海外出張リスク分析**。モデルの静的な知識だけでなく、**Google 検索グラウンディング**を使って天気・通貨・現地イベント・最新ニュースなどのリアルタイム情報を応答に含めることを目標としている。
+デモテーマは **海外出張リスク分析**。モデルの静的な知識だけでなく、**Tavily Web 検索**で最新情報（治安・ニュース・現地イベント等）をプロンプトに付加して Gemini に回答させる構成。
 
-**方針の補足（オーナーより）**：  
+**方針の補足（オーナーより）**：
 - クォータを消費するような高負荷な使い方は不要。デモとして動けばよい。
 - 「外部エージェントとしての付加価値」を示すため、wxO 単体では得られない最新情報（天気・祝日・現地イベント等）を含めることが重要。
 
@@ -50,6 +51,7 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 | エージェントサーバー | FastAPI (`agent_server.py`) |
 | ホスティング | Render 無料 Web Service（15分無通信でスリープ、復帰に30秒〜1分） |
 | ソース管理 | GitHub `matsuo-iguazu/wxo-a2a-demo` |
+| Web 検索 | Tavily Search API（最新情報取得） |
 | LLM | Gemini API（Google AI Studio、プロジェクト `wxo-a2a`） |
 | デプロイ | GitHub push → Render 自動デプロイ |
 
@@ -70,107 +72,121 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 | パス | 用途 |
 |---|---|
 | `POST /` | A2A RPC（`message/send` / `tasks/send`） |
-| `GET /health` | 稼働確認・設定確認 |
+| `GET /health` | 稼働確認・設定確認（`tavily_configured` フィールドで Tavily の有効/無効を確認可） |
 | `GET /models` | 利用可能モデル一覧（Gemini API に実際に問い合わせ） |
 | `GET /.well-known/agent.json` | A2A エージェントカード |
 | `GET /.well-known/agent-card.json` | 同上（別名） |
 
 ---
 
-## 3. 本日（2026-11-19）の作業内容と発見事項
+## 3. 調査・作業ログ（2026-11-19 〜 2026-11-20）
 
-### 3-1. 動作確認
+### Google Search Grounding の制約（重要）
 
-- `GET /health`、`GET /models`、`POST /`（A2A リクエスト）すべて正常に応答することを確認済み。
-- PowerShell の `Invoke-RestMethod` で日本語レスポンスが文字化けするのは **PowerShell コンソールのエンコーディング問題**であり、API レスポンス自体は正常な UTF-8。
+当初 Gemini の Google Search Grounding（`search=True`）で最新情報取得を試みたが、以下の制約が判明した：
 
-### 3-2. `GET /models` で確認した利用可能モデル（`wxo-a2a` プロジェクト）
+| 制約 | 内容 |
+|---|---|
+| Search Grounding が使えるモデル | Gemini 2 / Gemini 2.5 系のみ（無料枠 RPD=1,500） |
+| Gemini 3 以降 | Search Grounding RPD=0/0（利用不可） |
+| Gemini 2.0-flash | 廃止済み（`404 NOT_FOUND`）。`gemini-3.8-flash` を使えとメッセージあり |
+| Gemini 2.5-flash-lite | 新規ユーザー向け廃止（`404 NOT_FOUND`）。`gemini-3.5-flash-lite` を使えとメッセージあり |
 
-```
-gemini-2.5-flash, gemini-2.5-pro, gemma-4-26b-a4b-it, gemma-4-31b-it,
-gemini-2.5-flash-lite, gemini-3.1-flash-lite, gemini-3.5-flash,
-gemini-3.6-flash, gemini-3.7-flash, gemini-3.8-flash,
-gemini-4-argon, gemini-4-carbon, gemini-4-hydrogen, gemini-4-neon,
-antigravity-preview-*, deep-research-*, gemini-embedding-* など
-```
+→ **結論：無料枠では Search Grounding は事実上使えない。課金なしの代替手段として Tavily を採用。**
 
-> **注意**：`gemini-2.5-flash` は一覧に出るが、実際に呼び出すと `404 NOT_FOUND`（新規ユーザーには提供終了）。
-> エラーメッセージ：`"This model models/gemini-2.5-flash is no longer available to new users."`
-
-### 3-3. クォータ状況（Google AI Studio / `wxo-a2a` プロジェクト、無料枠）
-
-確認 URL：https://ai.dev/rate-limit
-
-| モデル | RPM上限 | RPD上限 | 備考 |
-|---|---|---|---|
-| Gemini 3.8 Flash | 5 | 20 | 本日 11/20 消費済み |
-| Gemini 3.6 Flash | 5 | 20 | |
-| **Gemini 3.1 Flash Lite** | **15** | **500** | **最も余裕あり ← 現プライマリ** |
-| Gemma 4 26B | 30 | 14,400 | |
-| Gemma 4 31B | 30 | 14,400 | |
-
-> **重要**：Gemini 系モデルはすべて**同じプロジェクト単位のクォータ**を共有している可能性が高い。
-> 本日の検証でクォータを使い切り、全 Gemini モデルが `429 RESOURCE_EXHAUSTED` になった。
-> RPM は1分でリセット。RPD は太平洋時間深夜0時（日本時間 午後4〜5時頃）にリセット。
-
-### 3-4. エラーパターン
+### エラーパターンと対処
 
 | エラー | 原因 | 対処 |
 |---|---|---|
-| `429 RESOURCE_EXHAUSTED` | RPM または RPD のクォータ超過 | 時間をおく。現コードは即次モデルへスキップ |
-| `404 NOT_FOUND` | モデルが新規ユーザー向けに提供終了 | `gemini-2.5-flash` をリストから除外済み |
-| `503 UNAVAILABLE` | Google 側の一時的な高負荷 | 3秒待ってリトライするコードを追加済み |
+| `429 RESOURCE_EXHAUSTED` (search=True) | Search Grounding 専用クォータ超過 or RPM超過 | `search=True` 失敗時に同モデルで `search=False` を試行するよう修正済み |
+| `429 RESOURCE_EXHAUSTED` (search=False) | 通常呼び出しの RPM/RPD 超過 | 次のモデルへスキップ |
+| `404 NOT_FOUND` | モデル廃止 | 自動的に次候補へスキップ（エラー処理済み） |
+| `503 UNAVAILABLE` | Google 側一時高負荷 | 3秒待って1回リトライ後、次候補へ |
+
+### RPD は28日間ローリングウィンドウ
+
+RPD（1日あたり上限）は「日次リセット」ではなく **過去28日間のローリングウィンドウ**で管理されている模様（Google AI Studio のレート制限ページで確認）。
 
 ---
 
 ## 4. 現在のコード状態
 
+### 処理フロー
+
+```
+ユーザー入力
+  ↓ build_prompt_with_context()
+Tavily で「{入力} 渡航 治安 最新情報 2025」を検索（最大3件）
+  ↓
+検索結果をプロンプトに付加（未設定時はスキップ）
+  ↓ call_gemini()
+gemini-3.1-flash-lite (search=False) で回答生成
+  ↓
+A2A レスポンスで返却
+```
+
 ### モデル優先順位（`agent_server.py` の `PREFERRED_MODELS`）
 
 ```python
-PRIMARY_MODEL = "gemini-3.1-flash-lite"  # 環境変数 GEMINI_MODEL で上書き可
+PRIMARY_MODEL = "gemini-2.0-flash"  # 環境変数 GEMINI_MODEL で上書き可
+                                     # ※ 404 になるため実質 gemini-3.1-flash-lite が使われる
 
 PREFERRED_MODELS = [
-    "gemini-3.1-flash-lite",  # RPM=15, RPD=500 ← 最も余裕
-    "gemini-3.8-flash",       # RPM=5,  RPD=20
-    "gemini-3.6-flash",       # RPM=5,  RPD=20
-    "gemma-4-26b-a4b-it",     # RPM=30, RPD=14,400（search=False、最終保険）
+    "gemini-2.0-flash",      # 404（廃止） → 自動スキップ
+    "gemini-2.5-flash-lite", # 404（新規ユーザー廃止） → 自動スキップ
+    "gemini-3.1-flash-lite", # search=True → 429、search=False → 200 OK ✅ 実質ここで動作
+    "gemma-4-26b-a4b-it",    # 最終保険（search=False）
 ]
 ```
 
+> **TODO**：`PRIMARY_MODEL` のデフォルトを `gemini-3.1-flash-lite` に戻すか、PREFERRED_MODELS から 404 モデルを除くとクリーンになる。現状は動作に問題ないが無駄なリクエストが発生している。
+
 ### フォールバック戦略
 
-1. `gemini-*` → `search=True` で試行 → 失敗したら `search=False` で再試行
-2. `429` が来たら同モデルの再試行をスキップして次候補へ
-3. `503` が来たら3秒待って同一構成で1回リトライ → 失敗したら次候補へ
-4. `gemma-*` → `search=False` のみ（Google Search Grounding 非対応）
+1. `gemini-*` → `search=True` で試行 → `429` なら `search=False` で同モデル再試行
+2. `search=False` でも `429` → 次のモデルへスキップ
+3. `404` → 次のモデルへスキップ
+4. `503` → 3秒待って1回リトライ → 失敗したら次候補へ
+5. `gemma-*` → `search=False` のみ
 
 ### 環境変数（Render）
 
-| 変数名 | 説明 |
-|---|---|
-| `GEMINI_API_KEY` | Gemini API キー（設定済み） |
-| `GEMINI_MODEL` | プライマリモデル名の上書き（現在未設定 → コードデフォルト使用） |
-| `SYSTEM_INSTRUCTION` | カスタムシステムプロンプト（設定済み・詳細な指示内容） |
+| 変数名 | 状態 | 説明 |
+|---|---|---|
+| `GEMINI_API_KEY` | ✅ 設定済み | Gemini API キー |
+| `TAVILY_API_KEY` | ✅ 設定済み | Tavily Search API キー |
+| `SYSTEM_INSTRUCTION` | ✅ 設定済み | カスタムシステムプロンプト（詳細な指示） |
+| `GEMINI_MODEL` | 未設定 | プライマリモデル名の上書き（未設定時はコードデフォルト） |
 
 ---
 
 ## 5. 残課題・次のアクション
 
 ### 優先度 高
-- [ ] **動作確認**：クォータリセット後（RPD は日本時間 午後4〜5時以降）に `POST /` を叩いて、`gemini-3.1-flash-lite (search=True)` で成功するか確認する
-- [ ] **Search Grounding の有効性確認**：応答に天気・最新ニュース・現地イベントが含まれているかを確認する
+- [ ] **wxO からのエンドツーエンド確認**：watsonx Orchestrate からの呼び出しで Tavily 検索結果を含む応答が表示されるか確認する
 
 ### 優先度 中
-- [ ] **wxO からのエンドツーエンド確認**：watsonx Orchestrate からの呼び出しで検索グラウンディング付き応答が表示されるか確認する
-- [ ] **`wxo_a2a.md` の「今後の進め方」を更新**：クォータ問題の調査は完了したため、次フェーズの内容に書き換える
+- [ ] **PREFERRED_MODELS の整理**：404 になる `gemini-2.0-flash` と `gemini-2.5-flash-lite` を除去し、`gemini-3.1-flash-lite` をプライマリに戻す
+- [ ] **応答品質の確認**：Tavily の検索結果が実際に回答に反映されているか（天気・最新ニュース・現地イベント）を人間の目で確認する
 
-### 参考
+### 参考リンク
 - Render URL：https://wxo-a2a-demo.onrender.com
-- Render ダッシュボード：https://dashboard.render.com（→ 下記アクセス手順参照）
+- Render ダッシュボード：https://dashboard.render.com（GitHub でログイン → `wxo-a2a-demo` を選択）
 - GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
 - クォータ確認：https://ai.dev/rate-limit
-- Google AI Studio レート制限ドキュメント：https://aistudio.google.com/docs/rate-limits
+- Tavily：https://app.tavily.com
+
+---
+
+## 6. クォータリセットポリシー（Google AI Studio 無料枠）
+
+| 種別 | リセット間隔 | 詳細 |
+|---|---|---|
+| **RPM**（1分あたり） | **1分ごと**（ローリングウィンドウ） | 1分待てば即回復 |
+| **RPD**（1日あたり） | **過去28日間ローリングウィンドウ**（日次リセットではない） | 使った分だけ28日間残る |
+
+- `429` が出ても RPM 超過であれば **1〜2分待つだけで回復** する。
+- RPD は日次リセットではないため、使い切ったら28日間待つ必要がある（ただし `gemini-3.1-flash-lite` は RPD=500 と余裕大）。
 
 ---
 
@@ -183,23 +199,9 @@ PREFERRED_MODELS = [
 
 | タブ | 用途 |
 |---|---|
-| **Logs** | リアルタイムログ確認（モデルの成功/失敗、エラー内容） |
-| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `SYSTEM_INSTRUCTION` など） |
+| **Logs** | リアルタイムログ確認（Tavily 検索結果件数、モデルの成功/失敗） |
+| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `TAVILY_API_KEY` など） |
 | **Events** | デプロイ履歴の確認 |
 | **Settings** | サービス設定（GitHub リポジトリ連携、自動デプロイ設定など） |
 
 > **Tips**：GitHub に push すると自動デプロイが走る。Logs タブで `==> Your service is live 🎉` が出ればデプロイ完了。
-
----
-
-## 6. クォータリセットポリシー（Google AI Studio 無料枠）
-
-| 種別 | リセット間隔 | 詳細 |
-|---|---|---|
-| **RPM**（1分あたり） | **1分ごと**（ローリングウィンドウ） | 1分待てば即回復 |
-| **RPD**（1日あたり） | **太平洋時間（PT）深夜0時** | 日本時間 午後4時（PDT/夏時間）または午後5時（PST/冬時間） |
-
-- 11月は PST（冬時間）のため、**日本時間 午後5時頃**に RPD がリセットされる。
-- `429 RESOURCE_EXHAUSTED` が出ても、RPM 超過であれば**1〜2分待つだけで回復**する。
-- RPD 上限に達した場合のみ、当日の午後5時まで待つ必要がある。
-- `gemini-3.1-flash-lite` は RPD=500 と余裕があるため、RPD 上限に達しにくい。

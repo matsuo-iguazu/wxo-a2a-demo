@@ -15,10 +15,12 @@ logger = logging.getLogger("a2a-travel-agent")
 
 app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 
-# 静的ファイル配信（/app 以下に static ディレクトリがある場合のみ）
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
+# 静的ファイル配信（カレントディレクトリまたは /app 以下の static ディレクトリ）
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+logger.info(f"Static dir: {_static_dir}, exists: {os.path.isdir(_static_dir)}")
 if os.path.isdir(_static_dir):
     app.mount("/ui", StaticFiles(directory=_static_dir, html=True), name="static")
+    logger.info("Static files mounted at /ui")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None

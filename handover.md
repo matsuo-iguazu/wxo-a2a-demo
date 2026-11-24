@@ -314,34 +314,18 @@ PREFERRED_MODELS = [
 
 ---
 
-## 7. 継続検証状況（2026-11-24 第2セッション終了時点）
+## 7. 継続検証状況（2026-11-19 第3セッション終了時点）
 
-### ✅ 解決済み：外務省レベル取得の不安定性
+### ✅ 完了：静的辞書廃止 → 全地域 XML キャッシュ＋Gemini 国名変換に移行
 
-**外務省公式オープンデータ XML API に切り替え完了**
+**変更内容**（コミット `2166822`）：
+- `_CITY_TO_MOFA_CODE` 静的辞書を廃止
+- `_load_mofa_country_cache()`：サーバ起動時に `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を取得し全国名→国コードをメモリにキャッシュ
+- `_resolve_mofa_code(destination)`：Gemini で都市名・英語表記→日本語国名に変換 → キャッシュで国コードを引く（完全一致→部分一致フォールバック）
+- FastAPI `startup` イベントで `_load_mofa_country_cache()` を呼び出す追加
+- `/debug-mofa` の `_get_mofa_country_code(dest)` を `_resolve_mofa_code(dest)` に修正（存在しない関数を参照していたバグ）
 
-- URL：`https://www.ezairyu.mofa.go.jp/opendata/country/{国コード}.xml`
-- 認証不要・5分毎更新・Tavily/Gemini 完全不要
-- `riskLevel1`〜`riskLevel4` フラグで確実にレベルを取得
-- バンコク・シンガポール：動作確認済み ✅
-
-**実装**：`agent_server.py`
-- `_CITY_TO_MOFA_CODE`：都市名→国コードの静的マッピング辞書（主要渡航先）
-- `_get_mofa_country_code(destination)`：マッピング参照
-- `get_mofa_safety_level(destination)`：XML 取得→レベルフラグ読み取り→テキスト生成
-
-**動作確認結果（`/debug-mofa` エンドポイント）**：
-```
-バンコク → code:0066 → レベル3（渡航中止勧告） / レベル2（不要不急の渡航自粛）（タイの危険情報【一部地域の危険レベル引下げ】）✅
-シンガポール → code:0065 → 危険情報の発令なし（概ね安全）✅
-モスクワ → code:007 → 空文字（国コードが間違い）❌ → 要修正
-```
-
-### ⚠️ 未解決：ロシアの国コード
-
-- コード `007` では取得できず（HTML エラーページが返る）
-- 全地域 XML から正しいコードを探す途中でセッション中断
-- **次回：** `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を取得し `<name>ロシア</name>` の前後 `<cd>` タグを確認する
+**これにより**：ロシア（コード `9007`）など辞書にない国も自動解決できるようになった。
 
 ### 未解決：外部エージェント返答の整形問題
 
@@ -356,17 +340,14 @@ PREFERRED_MODELS = [
 | 検証③ | wxO Suggested Replies でボタン表示 | ⬜ 未着手 | エージェント応答後に選択ボタンを固定表示 |
 
 ### 次回再開時にやること（優先順）
-1. ロシアの正しい国コードを確認して `_CITY_TO_MOFA_CODE` を修正
-   - `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を PowerShell で取得
-   - `$content -split "\`n" | Where-Object { $_ -match "ロシア" }` で検索
-   - 前後の `<cd>` タグを確認
-2. バンコク E2E テスト（MCP チャット）：外務省確認→規程案内が正しく動くか
+1. Render デプロイ完了後、`/debug-mofa?dest=バンコク` と `/debug-mofa?dest=Moscow` で動作確認
+2. E2E テスト（wxO UI または MCP チャット）：外務省確認→規程案内が正しく動くか
 3. 検証②：`sync_tool_flow_interactions: true` を YAML に設定→wxO UI で動作確認
 4. 検証③：Suggested Replies ボタン
 
 ### 現在のコード状態（push 済み）
-- **最新コミット**：`88545a8`（push 済み）
-- `agent_server.py`：外務省オープンデータ XML API 実装済み・`/debug-mofa` エンドポイント有効
+- **最新コミット**：`2166822`（push 済み）
+- `agent_server.py`：全地域 XML キャッシュ版・startup イベントで自動ロード・`/debug-mofa` バグ修正済み
 - `agents/M_test_A2A_gemini_updated.yaml`：検証①の Instructions 適用済み・wxO に import 済み
 - ローカル未 push 変更：**なし**
 

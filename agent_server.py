@@ -97,77 +97,115 @@ def extract_travel_info(user_text: str) -> Dict[str, Any]:
     return fallback
 
 
-def _resolve_country_name(destination: str) -> str:
-    """都市名・地域名から国名を取得する（例：バンコク→タイ）。失敗時は destination をそのまま返す。"""
-    if not client:
-        return destination
-    try:
-        config = types.GenerateContentConfig(temperature=0.0)
-        response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            contents=(
-                f"次の都市名・地域名が属する国名を日本語で1単語だけ返してください。"
-                f"国名が不明な場合はそのまま返してください。\n\n渡航先：{destination}"
-            ),
-            config=config,
-        )
-        country = _extract_response_text(response).strip()
-        logger.info(f"Country resolved: {destination!r} -> {country!r}")
-        return country if country else destination
-    except Exception:
-        return destination
+# 外務省オープンデータ：都市名→国コードのマッピング（主要渡航先）
+# https://www.ezairyu.mofa.go.jp/opendata/country/{CODE}.xml
+_CITY_TO_MOFA_CODE: dict = {
+    # 東南アジア
+    "バンコク": "0066", "タイ": "0066",
+    "シンガポール": "0065",
+    "クアラルンプール": "0060", "マレーシア": "0060",
+    "ジャカルタ": "0062", "バリ": "0062", "インドネシア": "0062",
+    "マニラ": "0063", "フィリピン": "0063",
+    "ホーチミン": "0084", "ハノイ": "0084", "ベトナム": "0084",
+    "ヤンゴン": "0095", "ミャンマー": "0095",
+    "プノンペン": "0855", "カンボジア": "0855",
+    # 東アジア
+    "上海": "0086", "北京": "0086", "中国": "0086",
+    "ソウル": "0082", "韓国": "0082",
+    "台北": "0886", "台湾": "0886",
+    "香港": "00852",
+    # 南アジア
+    "ムンバイ": "0091", "デリー": "0091", "インド": "0091",
+    # 中東
+    "ドバイ": "00971", "アブダビ": "00971", "UAE": "00971",
+    "リヤド": "00966", "サウジアラビア": "00966",
+    "イスラエル": "00972",
+    "イラク": "00964",
+    "イラン": "0098",
+    # 欧州
+    "パリ": "0033", "フランス": "0033",
+    "ロンドン": "0044", "イギリス": "0044",
+    "ベルリン": "0049", "フランクフルト": "0049", "ドイツ": "0049",
+    "ローマ": "0039", "イタリア": "0039",
+    "マドリード": "0034", "スペイン": "0034",
+    "モスクワ": "007", "サンクトペテルブルク": "007", "ロシア": "007",
+    "イスタンブール": "0090", "トルコ": "0090",
+    "ウクライナ": "00380",
+    # 北米
+    "ニューヨーク": "001", "ロサンゼルス": "001", "シカゴ": "001", "アメリカ": "001",
+    "トロント": "001CA", "カナダ": "001CA",
+    # 大洋州
+    "シドニー": "0061", "メルボルン": "0061", "オーストラリア": "0061",
+    # アフリカ
+    "ナイロビ": "00254", "ケニア": "00254",
+    "ヨハネスブルグ": "0027", "南アフリカ": "0027",
+}
+
+# 外務省オープンデータの国コード（4桁）→国名（キャッシュ用）
+_mofa_code_cache: dict = {}
+
+
+def _get_mofa_country_code(destination: str) -> Optional[str]:
+    """渡航先名から外務省オープンデータの国コードを返す。見つからなければ None。"""
+    # 完全一致優先
+    if destination in _CITY_TO_MOFA_CODE:
+        return _CITY_TO_MOFA_CODE[destination]
+    # 部分一致
+    for key, code in _CITY_TO_MOFA_CODE.items():
+        if key in destination or destination in key:
+            return code
+    return None
 
 
 def get_mofa_safety_level(destination: str) -> str:
-    """外務省海外安全情報から渡航先の危険度レベルを取得して返す。
-    返り値例: "レベル1（十分注意）"、取得失敗時は空文字を返す。
+    """外務省オープンデータから渡航先の危険度レベルを取得して返す。
+    Tavily・Gemini 不要。外務省公式 XML を直接取得（5分毎更新）。
+    返り値例: "一部地域レベル3（渡航中止勧告）/ 一部地域レベル2（不要不急の渡航自粛）"
+    取得失敗時は空文字を返す。
     """
-    if not TAVILY_API_KEY:
-        logger.info("TAVILY_API_KEY not set, skipping MOFA safety check")
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    code = _get_mofa_country_code(destination)
+    if not code:
+        logger.warning(f"MOFA: no country code for {destination!r}")
         return ""
+
+    url = f"https://www.ezairyu.mofa.go.jp/opendata/country/{code}.xml"
+    logger.info(f"MOFA opendata fetch: {url}")
     try:
-        from tavily import TavilyClient
-        tavily = TavilyClient(api_key=TAVILY_API_KEY)
-        # 都市名の場合は国名に変換してから検索（例：バンコク→タイ 危険情報 レベル）
-        country = _resolve_country_name(destination)
-        query = f"{country} 危険情報 レベル"
-        logger.info(f"MOFA safety search: {query}")
-        result = tavily.search(
-            query=query,
-            max_results=3,
-            search_depth="basic",
-            include_domains=["anzen.mofa.go.jp"],
-        )
-        snippets = []
-        for item in result.get("results", []):
-            content = item.get("content", "")
-            if content:
-                snippets.append(content[:1500])
-        if not snippets:
-            logger.warning(f"MOFA: no results for {destination!r}")
-            return ""
-        # Gemini で危険度レベルのみ抽出
-        if not client:
-            return "\n".join(snippets[:2])
-        combined = "\n\n---\n\n".join(snippets[:3])
-        config = types.GenerateContentConfig(temperature=0.0)
-        response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            contents=(
-                f"以下は外務省の海外安全情報のテキストです。\n"
-                f"「{destination}」に関する渡航先危険度レベルを読み取り、\n"
-                f"地域ごとに異なる場合はすべて列挙して簡潔に日本語で返してください。\n"
-                f"出力例：「バンコクを含む一般地域：レベル1（十分注意）/ 南部国境付近：レベル3（渡航中止勧告）」\n"
-                f"テキスト内にレベル情報がない場合のみ「情報なし」と返してください。\n\n"
-                f"テキスト：\n{combined}"
-            ),
-            config=config,
-        )
-        level_text = _extract_response_text(response).strip()
-        logger.info(f"MOFA safety level for {destination!r}: {level_text}")
-        return level_text
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            content = resp.read().decode("utf-8")
+        root = ET.fromstring(content)
+
+        # riskLevel1〜4 フラグを読む（1=発令中）
+        LEVEL_LABELS = {
+            "4": "レベル4（退避勧告）",
+            "3": "レベル3（渡航中止勧告）",
+            "2": "レベル2（不要不急の渡航自粛）",
+            "1": "レベル1（十分注意）",
+        }
+        active = []
+        for lv in ["4", "3", "2", "1"]:
+            elem = root.find(f"riskLevel{lv}")
+            if elem is not None and elem.text == "1":
+                active.append(LEVEL_LABELS[lv])
+
+        if not active:
+            # 危険情報なし＝全域レベル1未満（安全）
+            result = "危険情報の発令なし（概ね安全）"
+        else:
+            result = " / ".join(active)
+
+        # riskTitle も付加（例：「タイの危険情報【一部地域の危険レベル引下げ】」）
+        title_elem = root.find("riskTitle")
+        if title_elem is not None and title_elem.text:
+            result = f"{result}（{title_elem.text}）"
+
+        logger.info(f"MOFA level for {destination!r} [{code}]: {result}")
+        return result
     except Exception as e:
-        logger.warning(f"MOFA safety check failed: {e}")
+        logger.warning(f"MOFA opendata fetch failed for {destination!r}: {e}", exc_info=True)
         return ""
 
 

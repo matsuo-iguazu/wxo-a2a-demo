@@ -429,9 +429,9 @@ async def health():
 @app.get("/debug-mofa")
 async def debug_mofa(dest: str = "バンコク"):
     """外務省レベル取得のデバッグ用エンドポイント"""
-    country = _resolve_country_name(dest)
+    code = _get_mofa_country_code(dest)
     level = await asyncio.to_thread(get_mofa_safety_level, dest)
-    return {"dest": dest, "country": country, "level": level}
+    return {"dest": dest, "code": code, "level": level}
 
 
 

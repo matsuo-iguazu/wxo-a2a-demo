@@ -107,30 +107,20 @@ def get_mofa_safety_level(destination: str) -> str:
     try:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=TAVILY_API_KEY)
-        # 2クエリで引く：国名レベルの情報ページが返りやすいよう「危険情報」を先に、次点で渡航先名を含める
-        queries = [
-            f"{destination} 危険情報",
-            f"{destination} 危険情報 レベル",
-        ]
+        # 「{渡航先} 危険情報 レベル」で検索すると危険レベル一覧ページが上位に来る
+        query = f"{destination} 危険情報 レベル"
+        logger.info(f"MOFA safety search: {query}")
+        result = tavily.search(
+            query=query,
+            max_results=3,
+            search_depth="basic",
+            include_domains=["anzen.mofa.go.jp"],
+        )
         snippets = []
-        seen_urls: set = set()
-        for query in queries:
-            logger.info(f"MOFA safety search: {query}")
-            result = tavily.search(
-                query=query,
-                max_results=3,
-                search_depth="basic",
-                include_domains=["anzen.mofa.go.jp"],
-            )
-            for item in result.get("results", []):
-                url = item.get("url", "")
-                content = item.get("content", "")
-                if url not in seen_urls and content:
-                    seen_urls.add(url)
-                    # 長めに取る（後半にレベル情報が含まれることが多い）
-                    snippets.append(content[:1500])
-            if snippets:
-                break  # 1クエリで取れたら2本目は不要
+        for item in result.get("results", []):
+            content = item.get("content", "")
+            if content:
+                snippets.append(content[:1500])
         if not snippets:
             logger.warning(f"MOFA: no results for {destination!r}")
             return ""
@@ -429,10 +419,6 @@ async def a2a_rpc_endpoint(request: Request):
     method = body.get("method", "")
     params = body.get("params", {})
     logger.info(f"Received A2A RPC method={method} id={rpc_id}")
-    logger.info(f"[DEBUG] params keys={list(params.keys())}")
-    logger.info(f"[DEBUG] params.skillId={params.get('skillId')} params.skill={params.get('skill')}")
-    _msg = params.get("message", {})
-    logger.info(f"[DEBUG] message.parts={_msg.get('parts', [])[:2]}")
 
     if method in ("message/send", "tasks/send"):
         user_text = extract_user_text(params)

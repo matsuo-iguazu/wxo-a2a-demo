@@ -303,9 +303,45 @@ PREFERRED_MODELS = [
 > - そのため「外務省確認＋KB照合を1ターンで」は不可
 > - **2ターンフローに変更することで完全に解決**
 >
-> ### 最終コミット
-> - `agent_server.py`：`_resolve_country_name()` + `get_mofa_safety_level()` 追加（`342aee0` まで push 済み）
-> - `agents/M_test_A2A_gemini_updated.yaml`：2ターンフロー Instructions に更新・wxO 適用済み
+> ### コミット履歴（2026-11-24）
+> - `342aee0`：2ターンフロー確立・動作確認済み
+> - `1f88c2d`：handover 更新
+> - `80a2311`：Render 返答フォーマット改善・申請書ドラフト仮入力対応
+> - `3eab366`：【検証①開始】Render 返答をシンプルに・Instructions でエージェントが整形するよう変更
+> - `（未 push）`：`/debug-mofa` エンドポイント追加（Render ログ代替デバッグ用）
+
+---
+
+## 7. 未解決・継続検証（2026-11-24 セッション終了時点）
+
+### 課題：外部エージェント返答をネイティブエージェントが「自分の言葉に整形」できるか
+
+**背景**：`sync_tool_flow_interactions: false` の状態では、Render の返答がそのままユーザーに表示される。
+「続けて社内規程に照合しますか？」という CTA が Render 側から出てしまうのが不自然。
+
+**検証順序（途中）**：
+
+| # | 案 | 状態 | 内容 |
+|---|---|---|---|
+| 検証① | ③Render 返答をシンプルに + Instructions で整形 | 🔄 **実施中** | Render はファクトのみ返す。エージェントが自分の言葉で整形するよう指示 → MCP では依然 Render の返答がそのまま出る（`sync_tool_flow_interactions: false` の制約）|
+| 検証② | ①`sync_tool_flow_interactions: true` を再試行 | ⬜ 未着手 | UI で動作確認（MCP との挙動差を検証）|
+| 検証③ | ② wxO Suggested Replies でボタン表示 | ⬜ 未着手 | エージェント応答後に「照合する」ボタンを固定表示 |
+
+### 追加の課題：Render 外務省レベル取得の不安定性
+
+- Tavily のスニペット内容がランダムで毎回異なり、「バンコクはレベル1」という文言が含まれないことがある
+- Gemini が「情報なし」を返す頻度が高い
+- **デバッグ用 `/debug-mofa?dest=バンコク` エンドポイントを追加済み（未 push）**
+- 次回再開時に push → Render で確認 → 原因特定→修正
+
+### 次回再開時にやること（優先順）
+1. `agent_server.py` の `/debug-mofa` を push → Render で `https://wxo-a2a-demo.onrender.com/debug-mofa?dest=バンコク` を叩いて country/level を確認
+2. Tavily スニペット問題を修正（`search_depth="advanced"` 試行 or スニペット長をさらに拡大）
+3. 検証②：`sync_tool_flow_interactions: true` に戻して wxO UI で動作確認
+4. 検証③：Suggested Replies（返答ボタン）を試みる
+
+### 現在のローカル未 push 変更
+- `agent_server.py`：`/debug-mofa` エンドポイント追加
 
 - 中東・危険地域の出張申請 → 「規程により出張不可」を返すデモ（インパクト大）✅ 規程照合ロジック実装済みで対応可能
 

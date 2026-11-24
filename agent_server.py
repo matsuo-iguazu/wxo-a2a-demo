@@ -15,6 +15,11 @@ logger = logging.getLogger("a2a-travel-agent")
 
 app = FastAPI(title="Gemini Travel Risk Agent (A2A)")
 
+
+@app.on_event("startup")
+async def startup_event():
+    await asyncio.to_thread(_load_mofa_country_cache)
+
 # 静的ファイル配信（カレントディレクトリまたは /app 以下の static ディレクトリ）
 _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 logger.info(f"Static dir: {_static_dir}, exists: {os.path.isdir(_static_dir)}")
@@ -97,77 +102,87 @@ def extract_travel_info(user_text: str) -> Dict[str, Any]:
     return fallback
 
 
-# 外務省オープンデータ：都市名→国コードのマッピング（主要渡航先）
-# 国コードは https://www.ezairyu.mofa.go.jp/html/opendata/support/country.pdf を参照
-# https://www.ezairyu.mofa.go.jp/opendata/country/{CODE}.xml
-_CITY_TO_MOFA_CODE: dict = {
-    # 東南アジア
-    "バンコク": "0066", "タイ": "0066",
-    "シンガポール": "0065",
-    "クアラルンプール": "0060", "マレーシア": "0060",
-    "ジャカルタ": "0062", "バリ": "0062", "インドネシア": "0062",
-    "マニラ": "0063", "フィリピン": "0063",
-    "ホーチミン": "0084", "ハノイ": "0084", "ベトナム": "0084",
-    "ヤンゴン": "0095", "ミャンマー": "0095",
-    "プノンペン": "0855", "カンボジア": "0855",
-    # 東アジア
-    "上海": "0086", "北京": "0086", "中国": "0086",
-    "ソウル": "0082", "韓国": "0082",
-    "台北": "0886", "台湾": "0886",
-    "香港": "0852",
-    # 南アジア
-    "ムンバイ": "0091", "デリー": "0091", "インド": "0091",
-    # 中東
-    "ドバイ": "0971", "アブダビ": "0971", "UAE": "0971",
-    "リヤド": "0966", "サウジアラビア": "0966",
-    "イスラエル": "0972",
-    "イラク": "0964",
-    "イラン": "0098",
-    # 欧州
-    "パリ": "0033", "フランス": "0033",
-    "ロンドン": "0044", "イギリス": "0044",
-    "ベルリン": "0049", "フランクフルト": "0049", "ドイツ": "0049",
-    "ローマ": "0039", "イタリア": "0039",
-    "マドリード": "0034", "スペイン": "0034",
-    "モスクワ": "9007", "サンクトペテルブルク": "9007", "ロシア": "9007",
-    "イスタンブール": "0090", "トルコ": "0090",
-    "キーウ": "0380", "ウクライナ": "0380",
-    # 北米
-    "ニューヨーク": "1000", "ロサンゼルス": "1000", "シカゴ": "1000", "アメリカ": "1000",
-    "トロント": "1001", "カナダ": "1001",
-    # 大洋州
-    "シドニー": "0061", "メルボルン": "0061", "オーストラリア": "0061",
-    # アフリカ
-    "ナイロビ": "0254", "ケニア": "0254",
-    "ヨハネスブルグ": "0027", "南アフリカ": "0027",
-}
-
-# 外務省オープンデータの国コード（4桁）→国名（キャッシュ用）
-_mofa_code_cache: dict = {}
+# 外務省オープンデータ：国名→国コードのキャッシュ（起動時に全地域XMLから生成）
+# key: 国名（例: "タイ"）, value: 国コード（例: "0066"）
+_mofa_name_to_code: dict = {}
 
 
-def _get_mofa_country_code(destination: str) -> Optional[str]:
-    """渡航先名から外務省オープンデータの国コードを返す。見つからなければ None。"""
-    # 完全一致優先
-    if destination in _CITY_TO_MOFA_CODE:
-        return _CITY_TO_MOFA_CODE[destination]
-    # 部分一致
-    for key, code in _CITY_TO_MOFA_CODE.items():
-        if key in destination or destination in key:
+def _load_mofa_country_cache() -> None:
+    """外務省オープンデータの全地域XML（00.xml）を取得して国名→国コードのキャッシュを構築する。
+    サーバ起動時に1回だけ呼ぶ。失敗しても動作は継続する。
+    """
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    global _mofa_name_to_code
+    try:
+        url = "https://www.ezairyu.mofa.go.jp/opendata/area/00.xml"
+        logger.info("Loading MOFA country cache from opendata...")
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            content = resp.read().decode("utf-8")
+        root = ET.fromstring(content)
+        cache = {}
+        for country in root.iter("country"):
+            cd = country.find("cd")
+            name = country.find("name")
+            if cd is not None and name is not None and cd.text and name.text:
+                cache[name.text.strip()] = cd.text.strip()
+        _mofa_name_to_code = cache
+        logger.info(f"MOFA country cache loaded: {len(cache)} countries")
+    except Exception as e:
+        logger.warning(f"MOFA country cache load failed: {e}")
+
+
+def _resolve_mofa_code(destination: str) -> Optional[str]:
+    """渡航先名（都市名・国名・英語表記等）から外務省国コードを返す。
+    1. Gemini で国名（日本語）に変換
+    2. キャッシュから国コードを検索
+    失敗時は None を返す。
+    """
+    if not _mofa_name_to_code:
+        logger.warning("MOFA country cache is empty")
+        return None
+
+    # Gemini で国名に変換（都市名・英語表記・略称などを正規化）
+    country_name = destination
+    if client:
+        try:
+            config = types.GenerateContentConfig(temperature=0.0)
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=(
+                    f"次の都市名・地域名・国名が属する国の名称を、"
+                    f"外務省の国名表記（日本語）で1つだけ返してください。\n"
+                    f"例：バンコク→タイ、Moscow→ロシア、NYC→アメリカ合衆国／米国（本土）\n"
+                    f"渡航先：{destination}"
+                ),
+                config=config,
+            )
+            country_name = _extract_response_text(response).strip()
+            logger.info(f"Gemini resolved: {destination!r} -> {country_name!r}")
+        except Exception as e:
+            logger.warning(f"Gemini country resolution failed: {e}")
+
+    # 完全一致
+    if country_name in _mofa_name_to_code:
+        return _mofa_name_to_code[country_name]
+    # 部分一致（例: "アメリカ合衆国／米国（本土）" に "アメリカ" が含まれる場合）
+    for name, code in _mofa_name_to_code.items():
+        if country_name in name or name in country_name:
             return code
+    logger.warning(f"MOFA: country not found for {destination!r} (resolved: {country_name!r})")
     return None
 
 
 def get_mofa_safety_level(destination: str) -> str:
     """外務省オープンデータから渡航先の危険度レベルを取得して返す。
-    Tavily・Gemini 不要。外務省公式 XML を直接取得（5分毎更新）。
-    返り値例: "一部地域レベル3（渡航中止勧告）/ 一部地域レベル2（不要不急の渡航自粛）"
+    外務省公式 XML を直接取得（5分毎更新）。
+    返り値例: "レベル3（渡航中止勧告）（タイの危険情報）"
     取得失敗時は空文字を返す。
     """
     import urllib.request
     import xml.etree.ElementTree as ET
 
-    code = _get_mofa_country_code(destination)
+    code = _resolve_mofa_code(destination)
     if not code:
         logger.warning(f"MOFA: no country code for {destination!r}")
         return ""
@@ -179,22 +194,29 @@ def get_mofa_safety_level(destination: str) -> str:
             content = resp.read().decode("utf-8")
         root = ET.fromstring(content)
 
-        # riskTitle・riskLead を取得（地域別レベルの詳細が入っている）
+        # riskLevel4〜1 フラグ（Y=発令中）で最高危険レベルを判定
+        LEVELS = [
+            ("riskLevel4", 4, "レベル4（退避勧告）"),
+            ("riskLevel3", 3, "レベル3（渡航中止勧告）"),
+            ("riskLevel2", 2, "レベル2（不要不急の渡航自粛）"),
+            ("riskLevel1", 1, "レベル1（十分注意）"),
+        ]
+        max_level_label = None
+        for tag, lv, label in LEVELS:
+            elem = root.find(tag)
+            if elem is not None and elem.text in ("1", "Y"):
+                max_level_label = label
+                break  # 最高レベルだけ取れればよい
+
         title_elem = root.find("riskTitle")
-        lead_elem = root.find("riskLead")
         title = title_elem.text.strip() if title_elem is not None and title_elem.text else ""
-        lead = lead_elem.text.strip() if lead_elem is not None and lead_elem.text else ""
 
-        if not title and not lead:
-            # 危険情報なし
+        if not max_level_label:
             result = "危険情報の発令なし（概ね安全）"
-        elif lead:
-            # riskLead に地域別レベルの詳細が入っている
-            result = f"【{title}】\n{lead}" if title else lead
         else:
-            result = title
+            result = f"{max_level_label}（{title}）" if title else max_level_label
 
-        logger.info(f"MOFA level for {destination!r} [{code}]: {result[:80]}...")
+        logger.info(f"MOFA level for {destination!r} [{code}]: {result}")
         return result
     except Exception as e:
         logger.warning(f"MOFA opendata fetch failed for {destination!r}: {e}", exc_info=True)
@@ -421,7 +443,7 @@ async def health():
 @app.get("/debug-mofa")
 async def debug_mofa(dest: str = "バンコク"):
     """外務省レベル取得のデバッグ用エンドポイント"""
-    code = _get_mofa_country_code(dest)
+    code = _resolve_mofa_code(dest)
     level = await asyncio.to_thread(get_mofa_safety_level, dest)
     return {"dest": dest, "code": code, "level": level}
 

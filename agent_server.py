@@ -451,10 +451,9 @@ async def a2a_rpc_endpoint(request: Request):
             logger.info(f"MOFA safety check mode: destination={destination!r}")
             level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
             if level_text and level_text != "情報なし":
+                # シンプルな事実のみ返す（CTA はネイティブエージェント側に任せる）
                 reply_text = (
-                    f"外務省の海外安全情報によると、{destination}の危険度は以下のとおりです。\n\n"
-                    f"{level_text}\n\n"
-                    f"続けて社内規程に照合しますか？"
+                    f"外務省の海外安全情報（{destination}）：\n{level_text}"
                 )
             else:
                 reply_text = "外務省の安全情報を取得できませんでした。外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）でご確認のうえ、レベルをお知らせください。"

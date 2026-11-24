@@ -97,6 +97,27 @@ def extract_travel_info(user_text: str) -> Dict[str, Any]:
     return fallback
 
 
+def _resolve_country_name(destination: str) -> str:
+    """都市名・地域名から国名を取得する（例：バンコク→タイ）。失敗時は destination をそのまま返す。"""
+    if not client:
+        return destination
+    try:
+        config = types.GenerateContentConfig(temperature=0.0)
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=(
+                f"次の都市名・地域名が属する国名を日本語で1単語だけ返してください。"
+                f"国名が不明な場合はそのまま返してください。\n\n渡航先：{destination}"
+            ),
+            config=config,
+        )
+        country = _extract_response_text(response).strip()
+        logger.info(f"Country resolved: {destination!r} -> {country!r}")
+        return country if country else destination
+    except Exception:
+        return destination
+
+
 def get_mofa_safety_level(destination: str) -> str:
     """外務省海外安全情報から渡航先の危険度レベルを取得して返す。
     返り値例: "レベル1（十分注意）"、取得失敗時は空文字を返す。
@@ -107,8 +128,9 @@ def get_mofa_safety_level(destination: str) -> str:
     try:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=TAVILY_API_KEY)
-        # 「{渡航先} 危険情報 レベル」で検索すると危険レベル一覧ページが上位に来る
-        query = f"{destination} 危険情報 レベル"
+        # 都市名の場合は国名に変換してから検索（例：バンコク→タイ 危険情報 レベル）
+        country = _resolve_country_name(destination)
+        query = f"{country} 危険情報 レベル"
         logger.info(f"MOFA safety search: {query}")
         result = tavily.search(
             query=query,

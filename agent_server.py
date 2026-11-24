@@ -178,31 +178,22 @@ def get_mofa_safety_level(destination: str) -> str:
             content = resp.read().decode("utf-8")
         root = ET.fromstring(content)
 
-        # riskLevel1〜4 フラグを読む（1=発令中）
-        LEVEL_LABELS = {
-            "4": "レベル4（退避勧告）",
-            "3": "レベル3（渡航中止勧告）",
-            "2": "レベル2（不要不急の渡航自粛）",
-            "1": "レベル1（十分注意）",
-        }
-        active = []
-        for lv in ["4", "3", "2", "1"]:
-            elem = root.find(f"riskLevel{lv}")
-            if elem is not None and elem.text == "1":
-                active.append(LEVEL_LABELS[lv])
-
-        if not active:
-            # 危険情報なし＝全域レベル1未満（安全）
-            result = "危険情報の発令なし（概ね安全）"
-        else:
-            result = " / ".join(active)
-
-        # riskTitle も付加（例：「タイの危険情報【一部地域の危険レベル引下げ】」）
+        # riskTitle・riskLead を取得（地域別レベルの詳細が入っている）
         title_elem = root.find("riskTitle")
-        if title_elem is not None and title_elem.text:
-            result = f"{result}（{title_elem.text}）"
+        lead_elem = root.find("riskLead")
+        title = title_elem.text.strip() if title_elem is not None and title_elem.text else ""
+        lead = lead_elem.text.strip() if lead_elem is not None and lead_elem.text else ""
 
-        logger.info(f"MOFA level for {destination!r} [{code}]: {result}")
+        if not title and not lead:
+            # 危険情報なし
+            result = "危険情報の発令なし（概ね安全）"
+        elif lead:
+            # riskLead に地域別レベルの詳細が入っている
+            result = f"【{title}】\n{lead}" if title else lead
+        else:
+            result = title
+
+        logger.info(f"MOFA level for {destination!r} [{code}]: {result[:80]}...")
         return result
     except Exception as e:
         logger.warning(f"MOFA opendata fetch failed for {destination!r}: {e}", exc_info=True)

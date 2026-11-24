@@ -308,40 +308,67 @@ PREFERRED_MODELS = [
 > - `1f88c2d`：handover 更新
 > - `80a2311`：Render 返答フォーマット改善・申請書ドラフト仮入力対応
 > - `3eab366`：【検証①開始】Render 返答をシンプルに・Instructions でエージェントが整形するよう変更
-> - `（未 push）`：`/debug-mofa` エンドポイント追加（Render ログ代替デバッグ用）
+> - `db87da7`：`/debug-mofa` エンドポイント追加・handover 更新
+> - `c7450fb`：**【重要】外務省オープンデータ XML API に切り替え（Tavily/Gemini 不要）**
+> - `88545a8`：`/debug-mofa` を新 API に対応（`_get_mofa_country_code` を使用）
 
 ---
 
-## 7. 未解決・継続検証（2026-11-24 セッション終了時点）
+## 7. 継続検証状況（2026-11-24 第2セッション終了時点）
 
-### 課題：外部エージェント返答をネイティブエージェントが「自分の言葉に整形」できるか
+### ✅ 解決済み：外務省レベル取得の不安定性
 
-**背景**：`sync_tool_flow_interactions: false` の状態では、Render の返答がそのままユーザーに表示される。
-「続けて社内規程に照合しますか？」という CTA が Render 側から出てしまうのが不自然。
+**外務省公式オープンデータ XML API に切り替え完了**
 
-**検証順序（途中）**：
+- URL：`https://www.ezairyu.mofa.go.jp/opendata/country/{国コード}.xml`
+- 認証不要・5分毎更新・Tavily/Gemini 完全不要
+- `riskLevel1`〜`riskLevel4` フラグで確実にレベルを取得
+- バンコク・シンガポール：動作確認済み ✅
+
+**実装**：`agent_server.py`
+- `_CITY_TO_MOFA_CODE`：都市名→国コードの静的マッピング辞書（主要渡航先）
+- `_get_mofa_country_code(destination)`：マッピング参照
+- `get_mofa_safety_level(destination)`：XML 取得→レベルフラグ読み取り→テキスト生成
+
+**動作確認結果（`/debug-mofa` エンドポイント）**：
+```
+バンコク → code:0066 → レベル3（渡航中止勧告） / レベル2（不要不急の渡航自粛）（タイの危険情報【一部地域の危険レベル引下げ】）✅
+シンガポール → code:0065 → 危険情報の発令なし（概ね安全）✅
+モスクワ → code:007 → 空文字（国コードが間違い）❌ → 要修正
+```
+
+### ⚠️ 未解決：ロシアの国コード
+
+- コード `007` では取得できず（HTML エラーページが返る）
+- 全地域 XML から正しいコードを探す途中でセッション中断
+- **次回：** `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を取得し `<name>ロシア</name>` の前後 `<cd>` タグを確認する
+
+### 未解決：外部エージェント返答の整形問題
+
+**背景**：`sync_tool_flow_interactions: false` では Render の返答がそのままユーザーに表示される。
+
+**検証順序**：
 
 | # | 案 | 状態 | 内容 |
 |---|---|---|---|
-| 検証① | ③Render 返答をシンプルに + Instructions で整形 | 🔄 **実施中** | Render はファクトのみ返す。エージェントが自分の言葉で整形するよう指示 → MCP では依然 Render の返答がそのまま出る（`sync_tool_flow_interactions: false` の制約）|
-| 検証② | ①`sync_tool_flow_interactions: true` を再試行 | ⬜ 未着手 | UI で動作確認（MCP との挙動差を検証）|
-| 検証③ | ② wxO Suggested Replies でボタン表示 | ⬜ 未着手 | エージェント応答後に「照合する」ボタンを固定表示 |
-
-### 追加の課題：Render 外務省レベル取得の不安定性
-
-- Tavily のスニペット内容がランダムで毎回異なり、「バンコクはレベル1」という文言が含まれないことがある
-- Gemini が「情報なし」を返す頻度が高い
-- **デバッグ用 `/debug-mofa?dest=バンコク` エンドポイントを追加済み（未 push）**
-- 次回再開時に push → Render で確認 → 原因特定→修正
+| 検証① | Render 返答をシンプルに + Instructions で整形指示 | 🔄 適用済み・未確認 | MCP では依然 Render の返答がそのまま出る。UI での確認が必要 |
+| 検証② | `sync_tool_flow_interactions: true` を再試行 | ⬜ 未着手 | wxO UI で動作確認（MCP との挙動差を検証）|
+| 検証③ | wxO Suggested Replies でボタン表示 | ⬜ 未着手 | エージェント応答後に選択ボタンを固定表示 |
 
 ### 次回再開時にやること（優先順）
-1. `agent_server.py` の `/debug-mofa` を push → Render で `https://wxo-a2a-demo.onrender.com/debug-mofa?dest=バンコク` を叩いて country/level を確認
-2. Tavily スニペット問題を修正（`search_depth="advanced"` 試行 or スニペット長をさらに拡大）
-3. 検証②：`sync_tool_flow_interactions: true` に戻して wxO UI で動作確認
-4. 検証③：Suggested Replies（返答ボタン）を試みる
+1. ロシアの正しい国コードを確認して `_CITY_TO_MOFA_CODE` を修正
+   - `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を PowerShell で取得
+   - `$content -split "\`n" | Where-Object { $_ -match "ロシア" }` で検索
+   - 前後の `<cd>` タグを確認
+2. バンコク E2E テスト（MCP チャット）：外務省確認→規程案内が正しく動くか
+3. 検証②：`sync_tool_flow_interactions: true` を YAML に設定→wxO UI で動作確認
+4. 検証③：Suggested Replies ボタン
 
-### 現在のローカル未 push 変更
-- `agent_server.py`：`/debug-mofa` エンドポイント追加
+### 現在のコード状態（push 済み）
+- **最新コミット**：`88545a8`（push 済み）
+- `agent_server.py`：外務省オープンデータ XML API 実装済み・`/debug-mofa` エンドポイント有効
+- `agents/M_test_A2A_gemini_updated.yaml`：検証①の Instructions 適用済み・wxO に import 済み
+- ローカル未 push 変更：**なし**
 
 - 中東・危険地域の出張申請 → 「規程により出張不可」を返すデモ（インパクト大）✅ 規程照合ロジック実装済みで対応可能
 

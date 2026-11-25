@@ -529,7 +529,10 @@ async def _handle_mofa_check(params: Dict[str, Any], rpc_id: Any) -> JSONRespons
     logger.info(f"MOFA safety check: destination={destination!r}")
     level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
     if level_text and level_text != "情報なし":
-        reply_text = f"外務省の海外安全情報によると、{destination}の危険度は「{level_text}」です。"
+        reply_text = (
+            f"外務省の海外安全情報によると、{destination}の危険度は「{level_text}」です。"
+            "社内規程に照らし合わせて、渡航可否をご確認ください。"
+        )
     else:
         reply_text = (
             f"{destination}の安全情報は外務省のデータベースから取得できませんでした。"

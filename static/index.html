@@ -409,6 +409,21 @@
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tab-' + name).classList.add('active');
+
+    // 外務省タブ→レポートタブへの切り替え時に渡航先を引き継ぐ
+    if (name === 'report') {
+      const mofaDest = document.getElementById('mofa-destination').value;
+      const reportDest = document.getElementById('destination');
+      if (mofaDest && mofaDest !== '__other__') {
+        reportDest.value = mofaDest;
+        // 選択肢に存在しない場合は「その他」にフォールバック
+        if (reportDest.value !== mofaDest) {
+          reportDest.value = '__other__';
+          document.getElementById('other-input-wrap').style.display = 'block';
+          document.getElementById('destination-other').value = mofaDest;
+        }
+      }
+    }
   }
 
   // 渡航先「その他」切り替え（外務省タブ）

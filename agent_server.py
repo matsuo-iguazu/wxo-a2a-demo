@@ -409,24 +409,56 @@ def build_agent_card(base_url: str) -> Dict[str, Any]:
             {
                 "id": "mofa_safety_check",
                 "name": "外務省安全情報確認",
-                "description": "外務省の海外安全情報をもとに渡航先の危険度レベルを返します。メッセージの先頭に「[外務省安全確認]」を付けて渡航先を送信してください。",
+                "description": "外務省の海外安全情報をもとに渡航先の危険度レベルを返します。渡航先（国名または都市名）を送信してください。",
                 "tags": ["safety", "mofa", "risk-level"],
                 "examples": [
-                    "[外務省安全確認] バンコク",
-                    "[外務省安全確認] モスクワ",
+                    "バンコク",
+                    "モスクワ",
+                    "シンガポール",
                 ],
+                "url": f"{base_url}/mofa-check",
             },
             {
                 "id": "travel_report",
                 "name": "渡航先情報レポート",
-                "description": "渡航先・期間に基づき、治安・気候・注意事項・現地イベント等の実態情報を提供します。",
+                "description": "渡航先・期間に基づき、治安・気候・注意事項・現地イベント等の実態情報を提供します。渡航先と期間を含む自然な文章で送信してください。",
                 "tags": ["travel", "report", "local-info"],
                 "examples": [
-                    "来月バンコクに1週間行きます。現地情報を教えてください。"
+                    "来月バンコクに1週間行きます。現地情報を教えてください。",
+                    "12月にシンガポールに出張します。",
                 ],
+                "url": f"{base_url}/travel-report",
             },
         ],
     }
+
+
+def _build_a2a_response(rpc_id: Any, reply_text: str) -> JSONResponse:
+    """A2A JSON-RPC 成功レスポンスを生成するヘルパー。"""
+    task_id = str(uuid.uuid4())
+    context_id = str(uuid.uuid4())
+    msg_id = str(uuid.uuid4())
+    result = {
+        "id": task_id,
+        "contextId": context_id,
+        "kind": "task",
+        "status": {
+            "state": "completed",
+            "message": {
+                "role": "agent",
+                "parts": [{"kind": "text", "text": reply_text}],
+                "messageId": msg_id,
+            },
+        },
+        "artifacts": [
+            {
+                "artifactId": str(uuid.uuid4()),
+                "name": "Travel Risk Report",
+                "parts": [{"kind": "text", "text": reply_text}],
+            }
+        ],
+    }
+    return JSONResponse(content={"jsonrpc": "2.0", "id": rpc_id, "result": result})
 
 
 @app.get("/health")
@@ -489,8 +521,91 @@ def extract_user_text(params: Dict[str, Any]) -> str:
     return str(params.get("input", "海外出張のリスクを教えてください。"))
 
 
+async def _handle_mofa_check(params: Dict[str, Any], rpc_id: Any) -> JSONResponse:
+    """外務省危険度レベル取得の共通処理。"""
+    destination = extract_user_text(params).strip()
+    # 後方互換：旧プレフィックスが付いていても正しく処理する
+    destination = destination.removeprefix("[外務省安全確認]").strip()
+    logger.info(f"MOFA safety check: destination={destination!r}")
+    level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
+    if level_text and level_text != "情報なし":
+        reply_text = f"外務省の海外安全情報（{destination}）：\n{level_text}"
+    else:
+        reply_text = (
+            "外務省の安全情報を取得できませんでした。"
+            "外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）でご確認のうえ、"
+            "レベルをお知らせください。"
+        )
+    return _build_a2a_response(rpc_id, reply_text)
+
+
+async def _handle_travel_report(params: Dict[str, Any], rpc_id: Any) -> JSONResponse:
+    """渡航情報レポートの共通処理。"""
+    user_text = extract_user_text(params)
+    logger.info(f"Travel report: user_text={user_text[:60]!r}")
+    prompt = await asyncio.to_thread(build_prompt_with_context, user_text)
+    try:
+        reply_text = await call_gemini(prompt)
+    except Exception as e:
+        logger.error(f"Travel report call_gemini failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32000, "message": str(e)}},
+        )
+    return _build_a2a_response(rpc_id, reply_text)
+
+
+@app.post("/mofa-check")
+async def mofa_check_endpoint(request: Request):
+    """外務省危険度レベル取得専用エンドポイント（skill: mofa_safety_check）。
+    渡航先（国名または都市名）をメッセージとして送信してください。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+        )
+    rpc_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+    logger.info(f"[/mofa-check] method={method} id={rpc_id}")
+    if method not in ("message/send", "tasks/send"):
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": f"Method not found: {method}"}},
+        )
+    return await _handle_mofa_check(params, rpc_id)
+
+
+@app.post("/travel-report")
+async def travel_report_endpoint(request: Request):
+    """渡航情報レポート専用エンドポイント（skill: travel_report）。
+    渡航先と期間を含む自然な文章を送信してください。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+        )
+    rpc_id = body.get("id")
+    method = body.get("method", "")
+    params = body.get("params", {})
+    logger.info(f"[/travel-report] method={method} id={rpc_id}")
+    if method not in ("message/send", "tasks/send"):
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": f"Method not found: {method}"}},
+        )
+    return await _handle_travel_report(params, rpc_id)
+
+
 @app.post("/")
 async def a2a_rpc_endpoint(request: Request):
+    """後方互換エンドポイント。メッセージ内容で mofa-check / travel-report を自動振り分け。"""
     try:
         body = await request.json()
     except Exception:
@@ -502,70 +617,16 @@ async def a2a_rpc_endpoint(request: Request):
     rpc_id = body.get("id")
     method = body.get("method", "")
     params = body.get("params", {})
-    logger.info(f"Received A2A RPC method={method} id={rpc_id}")
+    logger.info(f"[/] A2A RPC method={method} id={rpc_id}")
 
-    if method in ("message/send", "tasks/send"):
-        user_text = extract_user_text(params)
+    if method not in ("message/send", "tasks/send"):
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": f"Method not found: {method}"}},
+        )
 
-        # 外務省安全確認モード：メッセージ先頭に "[外務省安全確認]" がある場合
-        if user_text.strip().startswith("[外務省安全確認]"):
-            destination = user_text.strip().removeprefix("[外務省安全確認]").strip()
-            logger.info(f"MOFA safety check mode: destination={destination!r}")
-            level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
-            if level_text and level_text != "情報なし":
-                # シンプルな事実のみ返す（CTA はネイティブエージェント側に任せる）
-                reply_text = (
-                    f"外務省の海外安全情報（{destination}）：\n{level_text}"
-                )
-            else:
-                reply_text = "外務省の安全情報を取得できませんでした。外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）でご確認のうえ、レベルをお知らせください。"
-        else:
-            # 通常モード：渡航レポート
-            prompt = await asyncio.to_thread(build_prompt_with_context, user_text)
-            try:
-                reply_text = await call_gemini(prompt)
-            except Exception as e:
-                logger.error(f"A2A call_gemini failed: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "jsonrpc": "2.0",
-                        "id": rpc_id,
-                        "error": {"code": -32000, "message": str(e)},
-                    },
-                )
-
-        task_id = params.get("id") or str(uuid.uuid4())
-        context_id = params.get("contextId") or str(uuid.uuid4())
-        msg_id = str(uuid.uuid4())
-
-        result = {
-            "id": task_id,
-            "contextId": context_id,
-            "kind": "task",
-            "status": {
-                "state": "completed",
-                "message": {
-                    "role": "agent",
-                    "parts": [{"kind": "text", "text": reply_text}],
-                    "messageId": msg_id,
-                },
-            },
-            "artifacts": [
-                {
-                    "artifactId": str(uuid.uuid4()),
-                    "name": "Travel Risk Report",
-                    "parts": [{"kind": "text", "text": reply_text}],
-                }
-            ],
-        }
-        return JSONResponse(content={"jsonrpc": "2.0", "id": rpc_id, "result": result})
-
-    return JSONResponse(
-        status_code=400,
-        content={
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-        },
-    )
+    user_text = extract_user_text(params).strip()
+    if user_text.startswith("[外務省安全確認]"):
+        return await _handle_mofa_check(params, rpc_id)
+    else:
+        return await _handle_travel_report(params, rpc_id)

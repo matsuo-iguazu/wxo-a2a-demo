@@ -529,12 +529,11 @@ async def _handle_mofa_check(params: Dict[str, Any], rpc_id: Any) -> JSONRespons
     logger.info(f"MOFA safety check: destination={destination!r}")
     level_text = await asyncio.to_thread(get_mofa_safety_level, destination)
     if level_text and level_text != "情報なし":
-        reply_text = f"外務省の海外安全情報（{destination}）：\n{level_text}"
+        reply_text = f"外務省の海外安全情報によると、{destination}の危険度は「{level_text}」です。"
     else:
         reply_text = (
-            "外務省の安全情報を取得できませんでした。"
-            "外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）でご確認のうえ、"
-            "レベルをお知らせください。"
+            f"{destination}の安全情報は外務省のデータベースから取得できませんでした。"
+            "外務省海外安全ホームページ（https://www.anzen.mofa.go.jp/）で直接ご確認ください。"
         )
     return _build_a2a_response(rpc_id, reply_text)
 

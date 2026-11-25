@@ -7,61 +7,79 @@
 
 ## ⚠️ wxO 環境操作ルール（必読・厳守）
 
-**対象リソース以外には絶対にアクセス・更新・削除しないこと。**
+**対象リソース以外には絶対にアクセス・更新・削除しないこと。本番稼働しているリソースが同一環境にある。**
 
 | 種別 | 対象リソース名 | 備考 |
 |---|---|---|
-| エージェント | `M_test_A2A_gemini` | 表示名 |
-| ナレッジベース | `m_test_A2A_kb` | このプロジェクトで新規作成するもの |
+| ネイティブエージェント | `Untitled_Agent_1_0061NH`（表示名：`M_test_A2A_gemini`） | このプロジェクト専用 |
+| 外部エージェント | `agent_Gemini_mofa_check`、`agent_Gemini_travel_report` | このプロジェクト専用 |
+| ナレッジベース | `m_test_A2A_kb` | このプロジェクト専用 |
 
 ### 認証について
 - wxO SaaS 環境への認証は**人間が行う**（Bob/AIは認証操作を行わない）
 - 認証セッションは**約1時間で切れる**
 - 操作前に認証が有効かどうかを確認してから進めること
-- 切れていた場合は人間に再認証を依頼してから再開する
 
 ### ナレッジベースのベクトルLLM設定
 - KBのベクトルLLMは**デフォルトではなく `multilingual` のものを使用**すること
-- 作成時に必ず設定を確認・変更する
 
 ---
 
-## 0. システムトポロジー（最新）
+## 0. デモシナリオ（確定版）
 
-```mermaid
-sequenceDiagram
-    actor User as ユーザー
-    participant wxO as watsonx Orchestrate
-    participant Render as Render<br/>(agent_server.py)
-    participant Tavily as Tavily Search API
-    participant GeminiAPI as Gemini API<br/>(Google AI Studio)
+### コンセプト
 
-    User->>wxO: 質問入力（例：明日からバンコクに3か月出張します）
-    wxO->>Render: A2A RPC POST /<br/>method: message/send / JSON-RPC 2.0
-    Note over Render: extract_user_text() でテキスト抽出
-    Render->>GeminiAPI: 渡航先・渡航月をJSON抽出<br/>（extract_travel_info）
-    GeminiAPI-->>Render: {"destination":"バンコク","periods":[...]}
-    Render->>Tavily: 治安・気候・イベント・天気予報を検索<br/>（近日出発時は天気予報クエリも追加）
-    Tavily-->>Render: 検索結果（最大8件）
-    Note over Render: 検索結果をプロンプトに付加
-    Render->>GeminiAPI: generateContent（最終回答生成）
-    GeminiAPI-->>Render: 200 OK（生成テキスト）
-    Render-->>wxO: JSON-RPC response<br/>status.state: "completed"
-    wxO-->>User: エージェント応答表示
+> 「某社が社内で運用している**渡航情報調査ツール**（Gemini on Render）があります。wxOと連携することで、そのツールの結果を使って**社内規程の照合・申請書作成まで自動でサポート**できるようになります。」
+
+| 役割 | 担当 | 備考 |
+|---|---|---|
+| 外務省リアルタイム危険度レベル取得 | Gemini A2A（`/mofa-check`） | 外務省オープンデータXML直接取得 |
+| 渡航先の現地情報（治安・気候等） | Gemini A2A（`/travel-report`） | Tavily + Gemini |
+| 社内規程照合・申請書ドラフト | wxO ネイティブエージェント + KB | KB: `m_test_A2A_kb` |
+
+### デモフロー（動作確認済み ✅ 2026-11-25）
+
+```
+ユーザー：「来月バンコクに出張することになりました」
+  ↓
+wxO → agent_Gemini_mofa_check（POST /mofa-check）に転送
+  ↓
+Gemini：「外務省の海外安全情報によると、バンコクの危険度は
+         「レベル3（渡航中止勧告）」です。
+         社内規程に照らし合わせて、渡航可否をご確認ください。」
+  ↓ ← ここでwxOのコンテキストにレベル情報が残る（重要）
+ユーザー：「社内規程を確認してください」
+  ↓
+wxO → KB（m_test_A2A_kb）を参照して規程照合
+  ↓
+wxO：「社内規程により、バンコク（危険度レベル3）への渡航は原則禁止です...」
+
+--- シンガポールの場合 ---
+
+ユーザー：「じゃあシンガポールはどうですか？」
+  ↓
+Gemini：「外務省によると、シンガポールの危険度は「危険情報なし（概ね安全）」です。
+         社内規程に照らし合わせて...」
+  ↓
+ユーザー：「規程確認して」
+  ↓
+wxO：「問題ありません。やることリスト...申請書を作成しますか？」
+  ↓
+申請書ドラフト生成 ✅
 ```
 
-> **補足**：`TAVILY_API_KEY` 未設定時は Tavily 検索・地名抽出をスキップして直接 Gemini に渡す。
+### 重要な技術的発見（2026-11-25）
+
+**「A2A転送」でもwxOのコンテキストは引き継がれる。**
+
+外部エージェントの応答は「転送」としてユーザーに直接表示されるが、その内容はwxOのコンテキストに残り、次のターンでネイティブエージェントが参照できる。
 
 ---
 
 ## 1. プロジェクトの目的（要約）
 
-watsonx Orchestrate（wxO）から外部 A2A エージェントを接続するデモを構築する。  
-デモテーマは **海外出張リスク分析**。Tavily Web 検索で最新情報（治安・気候・現地イベント等）をプロンプトに付加して Gemini に回答させる構成。
-
-**方針の補足（オーナーより）**：
-- クォータを消費するような高負荷な使い方は不要。デモとして動けばよい。
-- 「外部エージェントとしての付加価値」を示すため、wxO 単体では得られない最新情報（天気・祝日・現地イベント等）を含めることが重要。
+watsonx Orchestrate（wxO）から外部 A2A エージェントを接続するデモを構築する。
+デモテーマは **海外出張支援**。既存の社内渡航情報調査ツール（Gemini）をwxOに接続し、規程照合・申請書作成まで一貫してサポートする体験を示す。
 
 ---
 
@@ -81,96 +99,95 @@ watsonx Orchestrate（wxO）から外部 A2A エージェントを接続する�
 
 | 項目 | 値 |
 |---|---|
-| エージェント名 | `M_test_A2A_gemini` |
-| エージェント内定義（外部エージェント） | `海外出張リスク分析（Gemini）` |
-| 外部エージェント接続名 | `M_test_A2A_gemini`（仮定義） |
-| Server URL | `https://wxo-a2a-demo.onrender.com` |
-| 認証 | 基本認証（Basic Auth）/ ユーザー名: `dummy` / パスワード: `dummy` |
+| ネイティブエージェント内部名 | `Untitled_Agent_1_0061NH` |
+| ネイティブエージェント表示名 | `M_test_A2A_gemini` |
+| ネイティブエージェント ID | `11c04a11-f68f-4ac9-9d48-6d5c4364513d` |
+| LLM | `bedrock/us.anthropic.claude-sonnet-4-6` |
+| collaborators | `agent_Gemini_mofa_check`、`agent_Gemini_travel_report` |
+| knowledge_base | `m_test_A2A_kb` |
+| sync_tool_flow_interactions | `true` |
 
-> **注意**：Basic Auth の `dummy/dummy` は、wxO UI 上で外部エージェント接続を定義する際に認証情報の入力が必須だったため便宜上設定した仮の値。Render 側（`agent_server.py`）では認証検証を行っていないため実質素通り。
+| 外部エージェント名 | api_url | 用途 |
+|---|---|---|
+| `agent_Gemini_mofa_check` | `https://wxo-a2a-demo.onrender.com/mofa-check` | 外務省危険度レベル取得 |
+| `agent_Gemini_travel_report` | `https://wxo-a2a-demo.onrender.com/travel-report` | 渡航情報レポート |
 
-**エンドポイント一覧**：
+> **認証**：Bearer Token（token: `dummy`）/ Render側では認証検証なし（実質素通り）
+
+### Renderエンドポイント一覧
 
 | パス | 用途 |
 |---|---|
-| `POST /` | A2A RPC（`message/send` / `tasks/send`） |
-| `GET /health` | 稼働確認（`tavily_configured` フィールドで Tavily の有効/無効を確認可） |
-| `GET /models` | 利用可能モデル一覧（Gemini API に実際に問い合わせ） |
+| `POST /mofa-check` | 外務省危険度レベル取得専用（skill: mofa_safety_check） |
+| `POST /travel-report` | 渡航情報レポート専用（skill: travel_report） |
+| `POST /` | 後方互換（`[外務省安全確認]`プレフィックスで自動振り分け） |
+| `GET /health` | 稼働確認 |
+| `GET /models` | 利用可能モデル一覧 |
 | `GET /.well-known/agent.json` | A2A エージェントカード |
 | `GET /.well-known/agent-card.json` | 同上（別名） |
+| `GET /debug-mofa` | 外務省API動作確認用（`?dest=バンコク`） |
 
 ---
 
-## 3. 調査・作業ログ
+## 3. 技術的制約（確定）
 
-### Google Search Grounding の制約（重要）
+### A2A コラボレーター「転送」問題
 
-当初 Gemini の Google Search Grounding（`search=True`）で最新情報取得を試みたが、以下の制約が判明：
+**現象**：ネイティブエージェントがA2A外部エージェントをコラボレーターとして呼ぶと、外部エージェントの応答がネイティブエージェントのコンテキストを通らずユーザーに直接表示される（「転送」動作）。
 
-| 制約 | 内容 |
-|---|---|
-| Search Grounding が使えるモデル | Gemini 2 / Gemini 2.5 系のみ（無料枠 RPD=1,500） |
-| Gemini 3 以降 | Search Grounding RPD=0/0（利用不可） |
-| Gemini 2.0-flash | 廃止済み（`404`）。`gemini-3.8-flash` を使えとのメッセージ |
-| Gemini 2.5-flash-lite | 新規ユーザー向け廃止（`404`）。`gemini-3.5-flash-lite` を使えとのメッセージ |
+**試したこと（全て効果なし）**：
+- `sync_tool_flow_interactions: true/false` の切り替え → 変化なし
+- Flow の Agent Node として外部エージェントを使う → UIに外部エージェントが出てこない（非サポート）
+- instructions に「結果を受け取って整形せよ」と指示 → 転送なので受け取れない
 
-→ **結論：無料枠では Search Grounding は事実上使えない。代替として Tavily を採用。**
+**重要な発見**：転送でも**wxOのコンテキストには残る**。次のターンでネイティブエージェントが参照できる。
 
-### エラーパターンと対処
+**現在の対応**：Render側（`/mofa-check`）の返答文を整形済みにする。
 
-| エラー | 原因 | 対処 |
-|---|---|---|
-| `429 RESOURCE_EXHAUSTED` (search=True) | Search Grounding 専用クォータ超過 | `search=True` 失敗時に同モデルで `search=False` を試行 |
-| `429 RESOURCE_EXHAUSTED` (search=False) | 通常呼び出しの RPM/RPD 超過 | 次のモデルへスキップ |
-| `404 NOT_FOUND` | モデル廃止 | 自動的に次候補へスキップ |
-| `503 UNAVAILABLE` | Google 側一時高負荷 | 3秒待って1回リトライ後、次候補へ |
+**サポートへ問い合わせ中**（2026-11-25）：
+> "Native agent cannot post-process A2A collaborator response before displaying to user — is this expected behavior?"
+> 確認項目：① 仕様か否か ② 回避策はあるか ③ Ideasに投稿すべきか
 
-### RPD は28日間ローリングウィンドウ
+### バンコクがレベル3と返る件
 
-RPD は「日次リセット」ではなく **過去28日間のローリングウィンドウ**で管理されている模様。
+外務省XMLは**国単位**でデータ取得。タイ国内の南部（マレーシア国境付近）がレベル3のため、バンコクと入力しても「タイの最高危険度 = レベル3」が返る。デモでは**モスクワ（レベル4）・シンガポール（危険なし）**を使うと正確。
 
 ---
 
 ## 4. 現在のコード状態
 
-### 処理フロー
+### 処理フロー（`/mofa-check`）
 
 ```
-ユーザー入力
-  ↓ extract_travel_info()  ← Gemini で JSON 解析
-渡航先・渡航月リスト（年付き）を抽出
-  例: {"destination": "バンコク", "periods": [{"year":2026,"month":11}, ...]}
-  ↓ search_travel_context()
-Tavily で3〜4クエリ検索（最大8件）：
-  - {destination} 治安 安全情報 最新
-  - {destination} {期間} 気候 季節
-  - {destination} {期間} イベント 祝日
-  - {destination} 天気予報 今週 来週  ← 出発が今月・翌月以内の場合のみ追加
-  ↓ build_prompt_with_context()
-検索結果をプロンプトに付加
-  ↓ call_gemini()
-Gemini で最終回答を生成（search=False）
+渡航先名を受け取る
+  ↓ _resolve_mofa_code()  ← Gemini で都市名→国名変換 → キャッシュで国コード取得
+外務省オープンデータ XML 取得（https://www.ezairyu.mofa.go.jp/opendata/country/{code}.xml）
   ↓
-A2A レスポンスで返却
+危険度レベル（riskLevel1〜4）を判定
+  ↓
+「外務省の海外安全情報によると、{destination}の危険度は「{level_text}」です。社内規程に照らし合わせて、渡航可否をご確認ください。」を返す
 ```
 
-### モデル優先順位（`PREFERRED_MODELS`）
+### 処理フロー（`/travel-report`）
+
+```
+ユーザーテキストを受け取る
+  ↓ extract_travel_info()  ← Gemini で渡航先・期間をJSON解析
+  ↓ search_travel_context()  ← Tavily で3〜4クエリ検索
+  ↓ build_prompt_with_context()  ← 検索結果をプロンプトに付加
+  ↓ call_gemini()  ← 最終回答生成
+A2A レスポンスで返す
+```
+
+### モデル優先順位
 
 ```python
-PRIMARY_MODEL = "gemini-3.1-flash-lite"  # プライマリ ✅
+PRIMARY_MODEL = "gemini-3.1-flash-lite"
 PREFERRED_MODELS = [
-    "gemini-3.1-flash-lite", # search=False → 200 OK ✅ プライマリ
-    "gemma-4-26b-a4b-it",    # 最終保険（search=False）
+    "gemini-3.1-flash-lite",  # プライマリ ✅
+    "gemma-4-26b-a4b-it",     # 最終保険
 ]
 ```
-
-> 廃止済みの `gemini-2.0-flash`・`gemini-2.5-flash-lite` を除去。Tavily で検索結果をプロンプトに付加する構成のため Google Search Grounding は不要。
-
-### フォールバック戦略
-
-1. `gemini-*` → `search=True` → `429` なら `search=False` で同モデル再試行
-2. `search=False` でも `429` or `404` → 次のモデルへ
-3. `503` → 3秒待って1回リトライ → 失敗したら次候補へ
 
 ### 環境変数（Render）
 
@@ -178,228 +195,49 @@ PREFERRED_MODELS = [
 |---|---|---|
 | `GEMINI_API_KEY` | ✅ 設定済み | Gemini API キー |
 | `TAVILY_API_KEY` | ✅ 設定済み | Tavily Search API キー |
-| `SYSTEM_INSTRUCTION` | ✅ 設定済み | カスタムシステムプロンプト（下記参照） |
-| `GEMINI_MODEL` | 未設定 | プライマリモデル名の上書き（未設定時はコードデフォルト） |
-
-### SYSTEM_INSTRUCTION（現在の設定内容）
-
-```
-あなたは企業の海外出張リスク分析の専門アドバイザーです。
-提供されたWeb検索結果を必ず活用し、一般的な傾向だけでなく「渡航期間の気候傾向」や「渡航時期の祝日・大型イベント・行事・直近ニュース」などの最新情報も踏まえて、以下の構成に従って簡潔かつ実務的に回答してください。
-
-先頭に「【（渡航先名）渡航に向けた調査】」というタイトルを1行出力すること。
-
-[サマリー表]
-| 観点 | リスクレベル（低・中・高） | 最重要ポイント（1行） |
-| 治安・安全 / 健康・医療 / 法規・入国手続き / 気候・行事・ビジネス環境 |
-
-### 1. 治安・安全リスク / 2. 健康・医療 / 3. 入国・ビザ・法規 / 4. 渡航期間の気候・行事・推奨アクション
-
-§4 の気候・行事・イベント：直近の天気予報または気候傾向と渡航期間中の祝日・イベントを引用。
-天気予報の検索結果がある場合は具体的な気温・天候を記載すること。
-
-ルール：700〜1,000文字、冗長な前置き不要、自然な日本語で。
-```
+| `SYSTEM_INSTRUCTION` | ✅ 設定済み | カスタムシステムプロンプト |
 
 ---
 
-## 5. 完成済み機能
-
-| 機能 | 状態 | URL / 備考 |
-|---|---|---|
-| A2A エージェント（渡航レポート） | ✅ 完成 | `POST https://wxo-a2a-demo.onrender.com/` |
-| Web アプリ（渡航レポート UI） | ✅ 完成 | `https://wxo-a2a-demo.onrender.com/ui/` |
-| wxO からの A2A 呼び出し | ✅ 動作確認済み | エージェント `M_test_A2A_gemini` |
-| Tavily 検索 + 渡航先・期間 JSON 解析 | ✅ 完成 | 年またぎ・近日天気予報対応 |
-
----
-
-## 6. 次フェーズ：wxO エージェント拡張（✅ 完了）
-
-### 方針
-
-「来月バンコクに行くことになった」のような自然な発話を受けて：
-1. 渡航先・期間をスロットで収集
-2. 既存エージェント（Render）を呼び出してリスクレポート取得
-3. 出張規程（知識ベース）を照合して規程上の注意事項を追加
-4. 出張申請書ドラフトを生成して出力
-
-### タスク一覧
-
-- [x] **出張規程サンプルドキュメントを作成**（危険度レベル・日当・承認フロー・保険等）
-  - ファイル：`knowledge-bases/travel_policy.md`（表示用）・`knowledge-bases/travel_policy.txt`（KB登録用）
-- [x] **wxO 知識ベース `m_test_A2A_kb` を作成・出張規程を登録**
-  - KB ID：`0a53f0e9-8c41-4980-9037-66f4732db17b`
-  - 埋め込みモデル：`ibm/granite-embedding-278m-multilingual`（multilingual ✅）
-  - ドキュメント：`travel_policy.txt`（1件、6.7 KB）、インデックス状態：`ready`
-- [x] **エージェント `Untitled_Agent_1_0061NH`（表示名 `M_test_A2A_gemini`）を更新**
-  - `knowledge_base` に `m_test_A2A_kb` を追加
-  - `instructions` を出張リスクレポート・規程照合・申請書ドラフト生成の3機能対応に拡張
-  - スターターポロンプト・ウェルカムメッセージも日本語対応に更新
-  - **規程照合ロジック**：危険度レベル3・4の地域 → 「出張不可」を明示
-  - **申請書ドラフト生成**：渡航先・期間・目的等を収集して申請書フォーマット出力
-- [x] **PREFERRED_MODELS の整理**：404 になる `gemini-2.0-flash` と `gemini-2.5-flash-lite` を除去し、`gemini-3.1-flash-lite` をプライマリに戻す
-
-### 次フェーズ設計メモ（完了）
-
-#### アーキテクチャ方針（確定）
-
-| 役割 | 担当 | 備考 |
-|---|---|---|
-| 外務省リアルタイム危険度レベル取得 | **Gemini A2A（Render）の新機能** | Tavily で `anzen.mofa.go.jp` を検索。KBの固定リストは不要 |
-| 社内手続きルール（承認・費用・申請書） | **KB（m_test_A2A_kb）** | レベルに応じた手続きを案内 |
-| 渡航先の現地情報（治安詳細・気候等） | **Gemini A2A（既存機能）** | ユーザーが求めた時のみ |
-
-> Tavily で `anzen.mofa.go.jp` を `include_domains` 指定して検索すると外務省の危険度レベルが正確に取得できることを確認済み（2026-11-20）。地域内の部分レベル差異も取得可能。
-
-#### Gemini A2A（agent_server.py）への追加実装
-
-- **外務省安全情報機能**を既存の渡航レポートとは**独立した機能**として追加
-  - 入力：渡航先のみ
-  - 処理：Tavily で `anzen.mofa.go.jp` を検索し危険度レベルのみ返す
-  - 出力：「レベル〇（〇〇）」のシンプルな回答
-- **渡航情報レポート機能**は既存のまま維持（別依頼で提供）
-- A2A の skill として2つに分けるか、メッセージ内容で振り分けるかは実装時に判断
-
-#### Web UI（static/index.html）への追加
-
-- 外務省安全情報確認モードを追加（渡航先を入力→危険度レベルのみ表示）
-- 既存の渡航レポートモードは維持
-
-#### KB（travel_policy.md）の見直し
-
-- 危険度レベルの固定リストは**外務省検索で代替するため不要**→ 削除
-- 代わりに「各レベルに応じた社内手続き」の記述を充実させる
-- 追加する内容：
-  - パスポート確認・作成（渡航前にやること）
-  - ビザ確認・取得（渡航前にやること）
-  - 保険は申請承認後に総務が手配
-  - 承認レベルは費用総額によっても変わる
-  - 帰国後：出張報告書の提出義務・費用精算（領収書添付）
-
-### 追加アイデア（将来）
-> **2026-11-24 完成・動作確認済み**
->
-> ### 確定したデモシナリオ（2ターンフロー）
->
-> **ターン1：ユーザーが渡航先を告げる**
-> → wxO エージェントが外部エージェント（Render）に `[外務省安全確認] バンコク` を送信
-> → Tavily で `anzen.mofa.go.jp` を検索 → Gemini で危険度レベルのみ抽出
-> → ユーザーに「バンコクを含む一般地域：レベル1（十分注意）」を返答
->
-> **ターン2：ユーザーが規程確認を求める**
-> → wxO エージェントが KB（m_test_A2A_kb）を参照
-> → レベル1・2：やることリスト全項目を提示（パスポート/ビザ/承認/申請/保険/ワクチン/費用/帰国後手続き）
-> → レベル3・4：「社内規程により渡航は原則禁止」を明記して終了
->
-> ### 動作確認済みシナリオ
-> | シナリオ | 結果 |
-> |---|---|
-> | バンコク（レベル1） | やることリスト提示 ✅ |
-> | モスクワ（レベル3・4） | 渡航不可を明示 ✅ |
->
-> ### 判明した技術的制約
-> - wxO A2A コラボレーター連携は「転送」動作のため、**外部エージェントの応答をネイティブエージェントのコンテキストに引き戻せない**
-> - そのため「外務省確認＋KB照合を1ターンで」は不可
-> - **2ターンフローに変更することで完全に解決**
->
-> ### コミット履歴（2026-11-24）
-> - `342aee0`：2ターンフロー確立・動作確認済み
-> - `1f88c2d`：handover 更新
-> - `80a2311`：Render 返答フォーマット改善・申請書ドラフト仮入力対応
-> - `3eab366`：【検証①開始】Render 返答をシンプルに・Instructions でエージェントが整形するよう変更
-> - `db87da7`：`/debug-mofa` エンドポイント追加・handover 更新
-> - `c7450fb`：**【重要】外務省オープンデータ XML API に切り替え（Tavily/Gemini 不要）**
-> - `88545a8`：`/debug-mofa` を新 API に対応（`_get_mofa_country_code` を使用）
-
----
-
-## 7. 継続検証状況（2026-11-19 第3セッション終了時点）
-
-### ✅ 完了：静的辞書廃止 → 全地域 XML キャッシュ＋Gemini 国名変換に移行
-
-**変更内容**（コミット `2166822`）：
-- `_CITY_TO_MOFA_CODE` 静的辞書を廃止
-- `_load_mofa_country_cache()`：サーバ起動時に `https://www.ezairyu.mofa.go.jp/opendata/area/00.xml` を取得し全国名→国コードをメモリにキャッシュ
-- `_resolve_mofa_code(destination)`：Gemini で都市名・英語表記→日本語国名に変換 → キャッシュで国コードを引く（完全一致→部分一致フォールバック）
-- FastAPI `startup` イベントで `_load_mofa_country_cache()` を呼び出す追加
-- `/debug-mofa` の `_get_mofa_country_code(dest)` を `_resolve_mofa_code(dest)` に修正（存在しない関数を参照していたバグ）
-
-**これにより**：ロシア（コード `9007`）など辞書にない国も自動解決できるようになった。
-
-### 未解決：外部エージェント返答の整形問題
-
-**背景**：`sync_tool_flow_interactions: false` では Render の返答がそのままユーザーに表示される。
-
-**検証順序**：
-
-| # | 案 | 状態 | 内容 |
-|---|---|---|---|
-| 検証① | Render 返答をシンプルに + Instructions で整形指示 | 🔄 適用済み・未確認 | MCP では依然 Render の返答がそのまま出る。UI での確認が必要 |
-| 検証② | `sync_tool_flow_interactions: true` を再試行 | ⬜ 未着手 | wxO UI で動作確認（MCP との挙動差を検証）|
-| 検証③ | wxO Suggested Replies でボタン表示 | ⬜ 未着手 | エージェント応答後に選択ボタンを固定表示 |
-
-### 次回再開時にやること（優先順）
-1. Render デプロイ完了後、`/debug-mofa?dest=バンコク` と `/debug-mofa?dest=Moscow` で動作確認
-2. E2E テスト（wxO UI または MCP チャット）：外務省確認→規程案内が正しく動くか
-3. 検証②：`sync_tool_flow_interactions: true` を YAML に設定→wxO UI で動作確認
-4. 検証③：Suggested Replies ボタン
-
-### 現在のコード状態（push 済み）
-- **最新コミット**：`2166822`（push 済み）
-- `agent_server.py`：全地域 XML キャッシュ版・startup イベントで自動ロード・`/debug-mofa` バグ修正済み
-- `agents/M_test_A2A_gemini_updated.yaml`：検証①の Instructions 適用済み・wxO に import 済み
-- ローカル未 push 変更：**なし**
-
-- 中東・危険地域の出張申請 → 「規程により出張不可」を返すデモ（インパクト大）✅ 規程照合ロジック実装済みで対応可能
-
-### wxO エージェント構成（更新後）
+## 5. ナレッジベース
 
 | 項目 | 値 |
 |---|---|
-| 内部 name | `Untitled_Agent_1_0061NH` |
-| 表示名 | `M_test_A2A_gemini` |
-| ID | `11c04a11-f68f-4ac9-9d48-6d5c4364513d` |
-| LLM | `bedrock/us.anthropic.claude-sonnet-4-6` |
-| collaborators | `agent_Gemini__4373as`（外部A2Aエージェント） |
-| knowledge_base | `m_test_A2A_kb` |
-| instructions | 出張リスクレポート・規程照合・申請書ドラフト生成の3機能対応 |
-
-### ナレッジベース KB ファイル
+| KB名 | `m_test_A2A_kb` |
+| KB ID | `0a53f0e9-8c41-4980-9037-66f4732db17b` |
+| 埋め込みモデル | `ibm/granite-embedding-278m-multilingual` |
+| ドキュメント | `travel_policy.txt`（1件、6.7 KB）|
+| インデックス状態 | `ready` |
 
 | ファイル | 内容 |
 |---|---|
 | `knowledge-bases/travel_policy.md` | 出張規程サンプル（表示用・ソース管理用） |
 | `knowledge-bases/travel_policy.txt` | KB 登録用（.md は非サポートのため .txt でコピー） |
-| `knowledge-bases/m_test_A2A_kb.yaml` | KB スペックファイル（絶対パス版） |
 | `knowledge-bases/m_test_A2A_kb_nodocs.yaml` | KB スペックファイル（相対パス版・実際に使用） |
-| `agents/M_test_A2A_gemini_export.yaml` | エージェントエクスポート（更新前バックアップ） |
-| `agents/M_test_A2A_gemini_updated.yaml` | エージェント更新用 YAML |
 
 ---
 
-## 6. クォータリセットポリシー（Google AI Studio 無料枠）
+## 6. 次回やること
 
-| 種別 | リセット間隔 | 詳細 |
+| 優先度 | タスク | 備考 |
 |---|---|---|
-| **RPM**（1分あたり） | **1分ごと**（ローリングウィンドウ） | 1分待てば即回復 |
-| **RPD**（1日あたり） | **過去28日間ローリングウィンドウ** | 使った分だけ28日間残る |
+| 高 | サポート回答待ち | A2A転送問題の仕様確認 |
+| 高 | サポート回答に応じてIdeas投稿 | 投稿文案は別チャットで作成済み |
+| 中 | UI（`static/index.html`）の整備 | 現在は渡航レポートのみ。外務省確認モード追加 |
+| 中 | バンコクの国単位レベル問題の対応 | 都市単位のレベル取得を検討 |
+| 低 | wxO Suggested Replies でボタン表示 | 未着手 |
 
 ---
 
-## 7. Render ダッシュボードへのアクセス手順
+## 7. コミット履歴（主要）
 
-1. https://dashboard.render.com を開く
-2. **「GitHub でログイン」** を選択（GitHub アカウントで認証）
-3. サービス一覧から **`wxo-a2a-demo`** を選択
-
-| タブ | 用途 |
+| コミット | 内容 |
 |---|---|
-| **Logs** | リアルタイムログ（Tavily 検索クエリ・件数・モデルの成功/失敗） |
-| **Environment** | 環境変数の確認・変更（`GEMINI_API_KEY`, `TAVILY_API_KEY`, `SYSTEM_INSTRUCTION`） |
-| **Events** | デプロイ履歴 |
-
-> **Tips**：GitHub に push すると自動デプロイ。`SYSTEM_INSTRUCTION` の変更はデプロイ不要で即時反映。
+| `dfe971e` | /mofa-check 返答に社内規程照合を促す文言を追加 |
+| `e806576` | /mofa-check 返答を自然な日本語文体に変更 |
+| `c7ccfb6` | エンドポイント分離（/mofa-check・/travel-report）・agent card skill に url 追加 |
+| `2166822` | 静的辞書廃止 → 全地域XMLキャッシュ＋Gemini国名変換に移行 |
+| `c7450fb` | 外務省オープンデータXML APIに切り替え |
 
 ---
 
@@ -407,5 +245,17 @@ PREFERRED_MODELS = [
 
 - Render URL：https://wxo-a2a-demo.onrender.com
 - GitHub：https://github.com/matsuo-iguazu/wxo-a2a-demo
+- Render ダッシュボード：https://dashboard.render.com
 - クォータ確認：https://ai.dev/rate-limit
 - Tavily：https://app.tavily.com
+- 外務省海外安全ホームページ：https://www.anzen.mofa.go.jp/
+- 外務省オープンデータ：https://www.ezairyu.mofa.go.jp/opendata/
+
+---
+
+## 9. クォータリセットポリシー（Google AI Studio 無料枠）
+
+| 種別 | リセット間隔 |
+|---|---|
+| **RPM**（1分あたり） | 1分ごと（ローリングウィンドウ） |
+| **RPD**（1日あたり） | 過去28日間ローリングウィンドウ |

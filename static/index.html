@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>海外出張 渡航レポート</title>
+  <title>海外出張サポート</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -25,6 +25,33 @@
     header h1 { font-size: 18px; font-weight: 600; }
     header span { font-size: 13px; color: #adb5bd; }
     .container { max-width: 760px; margin: 32px auto; padding: 0 16px; }
+
+    /* タブ */
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid #e5e7eb;
+      margin-bottom: 24px;
+      gap: 0;
+    }
+    .tab-btn {
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      background: none;
+      color: #57606a;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn.active {
+      color: #1f2328;
+      border-bottom-color: #3b82d4;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .card {
       background: #fff;
       border: 1px solid #e5e7eb;
@@ -101,8 +128,8 @@
     }
     .btn.loading .spinner { display: block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #result-card { display: none; }
-    #result-card.visible { display: block; }
+    .result-card { display: none; }
+    .result-card.visible { display: block; }
     .result-header {
       display: flex;
       justify-content: space-between;
@@ -118,15 +145,27 @@
       color: #1d4ed8;
       font-weight: 600;
     }
-    #result-body {
+    .result-body {
       font-size: 14px;
       line-height: 1.8;
       white-space: pre-wrap;
     }
+    /* 外務省確認結果の特別スタイル */
+    .mofa-result {
+      font-size: 15px;
+      line-height: 1.8;
+      padding: 16px;
+      border-radius: 6px;
+      border-left: 4px solid #3b82d4;
+      background: #f0f7ff;
+    }
+    .mofa-result.level-safe { border-left-color: #16a34a; background: #f0fdf4; }
+    .mofa-result.level-warn { border-left-color: #d97706; background: #fffbeb; }
+    .mofa-result.level-danger { border-left-color: #dc2626; background: #fef2f2; }
     /* Markdown-like table */
-    #result-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
-    #result-body th, #result-body td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
-    #result-body th { background: #f7f8fa; font-weight: 600; }
+    .result-body table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+    .result-body th, .result-body td { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
+    .result-body th { background: #f7f8fa; font-weight: 600; }
     .error-msg {
       color: #dc2626;
       font-size: 13px;
@@ -146,134 +185,213 @@
 <body>
 
 <header>
-  <h1>🌏 海外出張 渡航レポート</h1>
+  <h1>🌏 海外出張サポート</h1>
   <span>Powered by Gemini + Tavily</span>
 </header>
 
 <div class="container">
-  <div class="card">
-    <h2>出張情報の入力</h2>
 
-    <label for="destination">渡航先</label>
-    <select id="destination">
-      <optgroup label="東南アジア">
-        <option value="バンコク（タイ）">バンコク（タイ）</option>
-        <option value="シンガポール">シンガポール</option>
-        <option value="クアラルンプール（マレーシア）">クアラルンプール（マレーシア）</option>
-        <option value="ジャカルタ（インドネシア）">ジャカルタ（インドネシア）</option>
-        <option value="ホーチミン（ベトナム）">ホーチミン（ベトナム）</option>
-        <option value="ハノイ（ベトナム）">ハノイ（ベトナム）</option>
-        <option value="マニラ（フィリピン）">マニラ（フィリピン）</option>
-      </optgroup>
-      <optgroup label="東アジア">
-        <option value="上海（中国）">上海（中国）</option>
-        <option value="北京（中国）">北京（中国）</option>
-        <option value="香港">香港</option>
-        <option value="台北（台湾）">台北（台湾）</option>
-        <option value="ソウル（韓国）">ソウル（韓国）</option>
-      </optgroup>
-      <optgroup label="南アジア">
-        <option value="ムンバイ（インド）">ムンバイ（インド）</option>
-        <option value="ニューデリー（インド）">ニューデリー（インド）</option>
-        <option value="ベンガルール（インド）">ベンガルール（インド）</option>
-      </optgroup>
-      <optgroup label="中東・アフリカ">
-        <option value="ドバイ（UAE）">ドバイ（UAE）</option>
-        <option value="ナイロビ（ケニア）">ナイロビ（ケニア）</option>
-      </optgroup>
-      <optgroup label="欧州">
-        <option value="ロンドン（イギリス）">ロンドン（イギリス）</option>
-        <option value="パリ（フランス）">パリ（フランス）</option>
-        <option value="フランクフルト（ドイツ）">フランクフルト（ドイツ）</option>
-        <option value="アムステルダム（オランダ）">アムステルダム（オランダ）</option>
-      </optgroup>
-      <optgroup label="北米">
-        <option value="ニューヨーク（アメリカ）">ニューヨーク（アメリカ）</option>
-        <option value="サンフランシスコ（アメリカ）">サンフランシスコ（アメリカ）</option>
-        <option value="シカゴ（アメリカ）">シカゴ（アメリカ）</option>
-        <option value="トロント（カナダ）">トロント（カナダ）</option>
-      </optgroup>
-      <optgroup label="その他">
-        <option value="__other__">その他（直接入力）</option>
-      </optgroup>
-    </select>
-    <div id="other-input-wrap" style="display:none; margin-top:8px;">
-      <input type="text" id="destination-other" placeholder="例：ケープタウン（南アフリカ）">
-    </div>
-
-    <label>出張期間の指定方法</label>
-    <div class="toggle-group">
-      <button class="active" data-panel="days" onclick="switchPanel(this)">日数指定</button>
-      <button data-panel="range" onclick="switchPanel(this)">期間指定</button>
-      <button data-panel="months" onclick="switchPanel(this)">月数指定</button>
-    </div>
-
-    <!-- 日数指定 -->
-    <div id="panel-days" class="period-panel active">
-      <div class="half">
-        <label for="start-date-days">出発日</label>
-        <input type="date" id="start-date-days">
-      </div>
-      <div class="half">
-        <label for="num-days">日数</label>
-        <select id="num-days">
-          <option value="2">2日</option>
-          <option value="3" selected>3日</option>
-          <option value="4">4日</option>
-          <option value="5">5日</option>
-          <option value="7">7日（1週間）</option>
-          <option value="10">10日</option>
-          <option value="14">14日（2週間）</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- 期間指定 -->
-    <div id="panel-range" class="period-panel">
-      <div class="half">
-        <label for="start-date-range">出発日</label>
-        <input type="date" id="start-date-range">
-      </div>
-      <div class="half">
-        <label for="end-date-range">帰着日</label>
-        <input type="date" id="end-date-range">
-      </div>
-    </div>
-
-    <!-- 月数指定 -->
-    <div id="panel-months" class="period-panel">
-      <div class="half">
-        <label for="start-date-months">出発日</label>
-        <input type="date" id="start-date-months">
-      </div>
-      <div class="half">
-        <label for="num-months">月数</label>
-        <select id="num-months">
-          <option value="1">1か月</option>
-          <option value="2">2か月</option>
-          <option value="3" selected>3か月</option>
-          <option value="6">6か月</option>
-        </select>
-      </div>
-    </div>
-
-    <label for="purpose">出張目的（任意）</label>
-    <input type="text" id="purpose" placeholder="例：顧客訪問、展示会参加、プロジェクト立ち上げ">
-
-    <button class="btn" id="submit-btn" onclick="submitQuery()">
-      <div class="spinner"></div>
-      レポートを取得する
-    </button>
-    <div class="error-msg" id="error-msg"></div>
+  <!-- タブ -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('mofa', this)">🛡️ 外務省危険度確認</button>
+    <button class="tab-btn" onclick="switchTab('report', this)">📋 渡航レポート</button>
   </div>
 
-  <div class="card" id="result-card">
-    <div class="result-header">
-      <h2>渡航レポート</h2>
-      <span class="badge" id="result-badge"></span>
+  <!-- タブ1: 外務省危険度確認 -->
+  <div id="tab-mofa" class="tab-panel active">
+    <div class="card">
+      <h2>外務省 海外安全情報の確認</h2>
+
+      <label for="mofa-destination">渡航先</label>
+      <select id="mofa-destination">
+        <optgroup label="東南アジア">
+          <option value="バンコク（タイ）">バンコク（タイ）</option>
+          <option value="シンガポール" selected>シンガポール</option>
+          <option value="クアラルンプール（マレーシア）">クアラルンプール（マレーシア）</option>
+          <option value="ジャカルタ（インドネシア）">ジャカルタ（インドネシア）</option>
+          <option value="ホーチミン（ベトナム）">ホーチミン（ベトナム）</option>
+          <option value="ハノイ（ベトナム）">ハノイ（ベトナム）</option>
+          <option value="マニラ（フィリピン）">マニラ（フィリピン）</option>
+        </optgroup>
+        <optgroup label="東アジア">
+          <option value="上海（中国）">上海（中国）</option>
+          <option value="北京（中国）">北京（中国）</option>
+          <option value="香港">香港</option>
+          <option value="台北（台湾）">台北（台湾）</option>
+          <option value="ソウル（韓国）">ソウル（韓国）</option>
+        </optgroup>
+        <optgroup label="南アジア">
+          <option value="ムンバイ（インド）">ムンバイ（インド）</option>
+          <option value="ニューデリー（インド）">ニューデリー（インド）</option>
+          <option value="ベンガルール（インド）">ベンガルール（インド）</option>
+        </optgroup>
+        <optgroup label="中東・アフリカ">
+          <option value="ドバイ（UAE）">ドバイ（UAE）</option>
+          <option value="ナイロビ（ケニア）">ナイロビ（ケニア）</option>
+        </optgroup>
+        <optgroup label="欧州">
+          <option value="ロンドン（イギリス）">ロンドン（イギリス）</option>
+          <option value="パリ（フランス）">パリ（フランス）</option>
+          <option value="フランクフルト（ドイツ）">フランクフルト（ドイツ）</option>
+          <option value="イスタンブール（トルコ）">イスタンブール（トルコ）</option>
+          <option value="モスクワ（ロシア）">モスクワ（ロシア）</option>
+        </optgroup>
+        <optgroup label="北米">
+          <option value="ニューヨーク（アメリカ）">ニューヨーク（アメリカ）</option>
+          <option value="サンフランシスコ（アメリカ）">サンフランシスコ（アメリカ）</option>
+          <option value="トロント（カナダ）">トロント（カナダ）</option>
+        </optgroup>
+        <optgroup label="その他">
+          <option value="__other__">その他（直接入力）</option>
+        </optgroup>
+      </select>
+      <div id="mofa-other-wrap" style="display:none; margin-top:8px;">
+        <input type="text" id="mofa-destination-other" placeholder="例：テヘラン（イラン）">
+      </div>
+
+      <button class="btn" id="mofa-btn" onclick="submitMofa()">
+        <div class="spinner"></div>
+        危険度を確認する
+      </button>
+      <div class="error-msg" id="mofa-error-msg"></div>
     </div>
-    <div id="result-body"></div>
+
+    <div class="card result-card" id="mofa-result-card">
+      <div class="result-header">
+        <h2>外務省 海外安全情報</h2>
+        <span class="badge" id="mofa-result-badge"></span>
+      </div>
+      <div id="mofa-result-body" class="mofa-result"></div>
+    </div>
   </div>
+
+  <!-- タブ2: 渡航レポート -->
+  <div id="tab-report" class="tab-panel">
+    <div class="card">
+      <h2>出張情報の入力</h2>
+
+      <label for="destination">渡航先</label>
+      <select id="destination">
+        <optgroup label="東南アジア">
+          <option value="バンコク（タイ）">バンコク（タイ）</option>
+          <option value="シンガポール">シンガポール</option>
+          <option value="クアラルンプール（マレーシア）">クアラルンプール（マレーシア）</option>
+          <option value="ジャカルタ（インドネシア）">ジャカルタ（インドネシア）</option>
+          <option value="ホーチミン（ベトナム）">ホーチミン（ベトナム）</option>
+          <option value="ハノイ（ベトナム）">ハノイ（ベトナム）</option>
+          <option value="マニラ（フィリピン）">マニラ（フィリピン）</option>
+        </optgroup>
+        <optgroup label="東アジア">
+          <option value="上海（中国）">上海（中国）</option>
+          <option value="北京（中国）">北京（中国）</option>
+          <option value="香港">香港</option>
+          <option value="台北（台湾）">台北（台湾）</option>
+          <option value="ソウル（韓国）">ソウル（韓国）</option>
+        </optgroup>
+        <optgroup label="南アジア">
+          <option value="ムンバイ（インド）">ムンバイ（インド）</option>
+          <option value="ニューデリー（インド）">ニューデリー（インド）</option>
+          <option value="ベンガルール（インド）">ベンガルール（インド）</option>
+        </optgroup>
+        <optgroup label="中東・アフリカ">
+          <option value="ドバイ（UAE）">ドバイ（UAE）</option>
+          <option value="ナイロビ（ケニア）">ナイロビ（ケニア）</option>
+        </optgroup>
+        <optgroup label="欧州">
+          <option value="ロンドン（イギリス）">ロンドン（イギリス）</option>
+          <option value="パリ（フランス）">パリ（フランス）</option>
+          <option value="フランクフルト（ドイツ）">フランクフルト（ドイツ）</option>
+          <option value="イスタンブール（トルコ）">イスタンブール（トルコ）</option>
+          <option value="モスクワ（ロシア）">モスクワ（ロシア）</option>
+        </optgroup>
+        <optgroup label="北米">
+          <option value="ニューヨーク（アメリカ）">ニューヨーク（アメリカ）</option>
+          <option value="サンフランシスコ（アメリカ）">サンフランシスコ（アメリカ）</option>
+          <option value="トロント（カナダ）">トロント（カナダ）</option>
+        </optgroup>
+        <optgroup label="その他">
+          <option value="__other__">その他（直接入力）</option>
+        </optgroup>
+      </select>
+      <div id="other-input-wrap" style="display:none; margin-top:8px;">
+        <input type="text" id="destination-other" placeholder="例：ケープタウン（南アフリカ）">
+      </div>
+
+      <label>出張期間の指定方法</label>
+      <div class="toggle-group">
+        <button class="active" data-panel="days" onclick="switchPanel(this)">日数指定</button>
+        <button data-panel="range" onclick="switchPanel(this)">期間指定</button>
+        <button data-panel="months" onclick="switchPanel(this)">月数指定</button>
+      </div>
+
+      <!-- 日数指定 -->
+      <div id="panel-days" class="period-panel active">
+        <div class="half">
+          <label for="start-date-days">出発日</label>
+          <input type="date" id="start-date-days">
+        </div>
+        <div class="half">
+          <label for="num-days">日数</label>
+          <select id="num-days">
+            <option value="2">2日</option>
+            <option value="3" selected>3日</option>
+            <option value="4">4日</option>
+            <option value="5">5日</option>
+            <option value="7">7日（1週間）</option>
+            <option value="10">10日</option>
+            <option value="14">14日（2週間）</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 期間指定 -->
+      <div id="panel-range" class="period-panel">
+        <div class="half">
+          <label for="start-date-range">出発日</label>
+          <input type="date" id="start-date-range">
+        </div>
+        <div class="half">
+          <label for="end-date-range">帰着日</label>
+          <input type="date" id="end-date-range">
+        </div>
+      </div>
+
+      <!-- 月数指定 -->
+      <div id="panel-months" class="period-panel">
+        <div class="half">
+          <label for="start-date-months">出発日</label>
+          <input type="date" id="start-date-months">
+        </div>
+        <div class="half">
+          <label for="num-months">月数</label>
+          <select id="num-months">
+            <option value="1">1か月</option>
+            <option value="2">2か月</option>
+            <option value="3" selected>3か月</option>
+            <option value="6">6か月</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="purpose">出張目的（任意）</label>
+      <input type="text" id="purpose" placeholder="例：顧客訪問、展示会参加、プロジェクト立ち上げ">
+
+      <button class="btn" id="submit-btn" onclick="submitQuery()">
+        <div class="spinner"></div>
+        レポートを取得する
+      </button>
+      <div class="error-msg" id="error-msg"></div>
+    </div>
+
+    <div class="card result-card" id="result-card">
+      <div class="result-header">
+        <h2>渡航レポート</h2>
+        <span class="badge" id="result-badge"></span>
+      </div>
+      <div id="result-body" class="result-body"></div>
+    </div>
+  </div>
+
 </div>
 
 <footer>Made with IBM Bob</footer>
@@ -285,7 +403,21 @@
   document.getElementById('start-date-range').value = today;
   document.getElementById('start-date-months').value = today;
 
-  // 渡航先「その他」切り替え
+  // タブ切り替え
+  function switchTab(name, btn) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+  }
+
+  // 渡航先「その他」切り替え（外務省タブ）
+  document.getElementById('mofa-destination').addEventListener('change', function() {
+    document.getElementById('mofa-other-wrap').style.display =
+      this.value === '__other__' ? 'block' : 'none';
+  });
+
+  // 渡航先「その他」切り替え（レポートタブ）
   document.getElementById('destination').addEventListener('change', function() {
     document.getElementById('other-input-wrap').style.display =
       this.value === '__other__' ? 'block' : 'none';
@@ -307,7 +439,72 @@
     return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
   }
 
-  // クエリ文字列を組み立て
+  // 外務省確認の送信
+  async function submitMofa() {
+    const destSel = document.getElementById('mofa-destination').value;
+    const dest = destSel === '__other__'
+      ? document.getElementById('mofa-destination-other').value.trim()
+      : destSel;
+    if (!dest) {
+      showMofaError('渡航先を入力してください。');
+      return;
+    }
+
+    const btn = document.getElementById('mofa-btn');
+    const errorEl = document.getElementById('mofa-error-msg');
+    errorEl.style.display = 'none';
+    btn.disabled = true;
+    btn.classList.add('loading');
+
+    const resultCard = document.getElementById('mofa-result-card');
+    const resultBody = document.getElementById('mofa-result-body');
+    const resultBadge = document.getElementById('mofa-result-badge');
+    resultCard.classList.remove('visible');
+
+    try {
+      const res = await fetch('/mofa-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'mofa-' + Date.now(),
+          method: 'message/send',
+          params: { message: { parts: [{ kind: 'text', text: dest }] } }
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.result?.status?.message?.parts?.[0]?.text || '（応答なし）';
+
+      // 危険度に応じてスタイルを変更
+      resultBody.className = 'mofa-result';
+      if (text.includes('レベル4') || text.includes('レベル3')) {
+        resultBody.classList.add('level-danger');
+      } else if (text.includes('レベル2') || text.includes('レベル1')) {
+        resultBody.classList.add('level-warn');
+      } else if (text.includes('危険情報の発令なし')) {
+        resultBody.classList.add('level-safe');
+      }
+
+      resultBody.textContent = text;
+      resultBadge.textContent = new Date().toLocaleString('ja-JP');
+      resultCard.classList.add('visible');
+      resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      showMofaError('エラーが発生しました：' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+    }
+  }
+
+  function showMofaError(msg) {
+    const el = document.getElementById('mofa-error-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  // クエリ文字列を組み立て（渡航レポート）
   function buildQuery() {
     const destSel = document.getElementById('destination').value;
     const dest = destSel === '__other__'
@@ -341,52 +538,30 @@
 
   // マークダウン簡易レンダリング
   function renderMarkdown(text) {
-    // エスケープ
     let html = text
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    // タイトル行【...】を大きく表示
     html = html.replace(/^(【.+】)$/gm,
       '<div style="font-size:17px;font-weight:700;margin:0 0 12px;">$1</div>');
-
-    // 見出し
     html = html.replace(/^### (.+)$/gm,
       '<h3 style="margin:16px 0 4px;font-size:14px;font-weight:600;border-left:3px solid #3b82d4;padding-left:8px;">$1</h3>');
     html = html.replace(/^## (.+)$/gm,
       '<h2 style="margin:18px 0 6px;font-size:15px;font-weight:600;">$1</h2>');
-
-    // 太字
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-    // テーブル（:---行はスキップ）
     html = html.replace(/^\|(.+)\|$/gm, (_, row) => {
       const cells = row.split('|').map(c => c.trim());
-      if (cells.every(c => /^:?-+:?$/.test(c))) return '';  // 区切り行をスキップ
+      if (cells.every(c => /^:?-+:?$/.test(c))) return '';
       return '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
     });
-    html = html.replace(/(<tr>[\s\S]*?<\/tr>)/g, m => {
-      if (m.includes('<table>')) return m;
-      return m;
-    });
     html = html.replace(/(<tr>.*?<\/tr>\s*)+/gs, m => `<table>${m}</table>`);
-
-    // チェックリスト・箇条書き
-    html = html.replace(/^- \[ \] (.+)$/gm,
-      '<div style="margin:4px 0;">☐ $1</div>');
-    html = html.replace(/^- (.+)$/gm,
-      '<div style="margin:3px 0 3px 16px;">• $1</div>');
-
-    // ブロック要素（div/h2/h3/table）前後の余分な改行を除去
+    html = html.replace(/^- \[ \] (.+)$/gm, '<div style="margin:4px 0;">☐ $1</div>');
+    html = html.replace(/^- (.+)$/gm, '<div style="margin:3px 0 3px 16px;">• $1</div>');
     html = html.replace(/\n+(<(?:div|h2|h3|table))/g, '$1');
     html = html.replace(/(\/(?:div|h2|h3|table)>)\n+/g, '$1');
-    // 連続する空行を圧縮してからブロックに変換
     html = html.replace(/\n{3,}/g, '\n\n');
     html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
     html = html.replace(/\n/g, '<br>');
-    // 空の <p> タグを除去
     html = html.replace(/<p[^>]*>\s*<\/p>/g, '');
     html = '<p style="margin:0;">' + html + '</p>';
-
     return html;
   }
 
@@ -401,7 +576,6 @@
     errorEl.style.display = 'none';
     btn.disabled = true;
     btn.classList.add('loading');
-    btn.querySelector('.spinner').style.display = 'block';
 
     const resultCard = document.getElementById('result-card');
     const resultBody = document.getElementById('result-body');
@@ -409,7 +583,7 @@
     resultCard.classList.remove('visible');
 
     try {
-      const res = await fetch('/', {
+      const res = await fetch('/travel-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -431,7 +605,6 @@
     } finally {
       btn.disabled = false;
       btn.classList.remove('loading');
-      btn.querySelector('.spinner').style.display = 'none';
     }
   }
 
